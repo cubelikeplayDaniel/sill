@@ -104,6 +104,7 @@ struct StreamScreen: View {
     @ObservedObject var client: StreamClient
     @State private var drawerOpen = false
     @State private var keyboardShown = false
+    @State private var scribbleShown = false
     /// Modifiers held down by the portrait key row until the next key, character or click uses
     /// them. Lives up here so rotating the iPad does not drop a half-typed shortcut.
     @State private var latched: KeyModifiers = []
@@ -1170,7 +1171,7 @@ struct StreamScreen: View {
         let (bar, stripWidth) = plain.clearing(fold, width: width)
         return VStack(spacing: 0) {
             TopBar(client: client, metrics: bar, stripWidth: stripWidth, drawerOpen: $drawerOpen,
-                   keyboardShown: $keyboardShown,
+                   keyboardShown: $keyboardShown, scribbleShown: $scribbleShown,
                    textScale: $textScale, scaleOpen: $scaleOpen, windowMenu: $windowMenu,
                    settingsOpen: settingsOpen,
                    // Apps, Menus, Aa, Keyboard, Desktop, Settings, and the strip. The Mac's sound has no
@@ -1234,6 +1235,12 @@ struct StreamScreen: View {
             // A locked Mac: its cover over the picture (LockedMac), under the link's line.
             .overlay { LockedMacShade(client: client) }
             .overlay(alignment: .top) { LinkLineView(text: shownLinkLine) }
+            .overlay(alignment: .bottom) {
+                if scribbleShown {
+                    ScribbleBar(isShown: $scribbleShown, sendInput: { client.sendInput($0) })
+                        .transition(.move(edge: .bottom).combined(with: .opacity))
+                }
+            }
             .clipShape(streamShape)
             .overlay(streamShape.strokeBorder(Color.white.opacity(0.09), lineWidth: 1))
             // The panel itself, inside the padding: the size the host fits the Mac window to.
@@ -1423,6 +1430,7 @@ private struct TopBar: View {
     var stripWidth: CGFloat? = nil
     @Binding var drawerOpen: Bool
     @Binding var keyboardShown: Bool
+    @Binding var scribbleShown: Bool
     @Binding var textScale: Double?
     @Binding var scaleOpen: Bool
     @Binding var windowMenu: UInt32?
@@ -1482,6 +1490,12 @@ private struct TopBar: View {
                 .opacity(scaleOpen ? 0 : 1)
                 .allowsHitTesting(!scaleOpen)
                 .tourTarget(.keyboard)
+
+            button(open: scribbleShown, symbol: "pencil.and.scribble", label: "Scribble",
+                   accessibilityLabel: scribbleShown ? "Hide handwriting input bar" : "Show handwriting input bar",
+                   action: { withAnimation(.easeOut(duration: 0.16)) { scribbleShown.toggle() } })
+                .opacity(scaleOpen ? 0 : 1)
+                .allowsHitTesting(!scaleOpen)
 
             button(open: client.active == .desktop && !client.padMode, symbol: "desktopcomputer", label: "Desktop",
                    accessibilityLabel: "Show the full Mac desktop",
