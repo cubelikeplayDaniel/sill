@@ -79,6 +79,9 @@ public struct WindowList: Codable {
     /// login window, or none), left out while its own screen is locked. A device words its cover by it:
     /// nothing typed reaches the Mac then (`LockedMac.Why`).
     public var offConsole: Bool?
+    /// Carried by hosts that accept kind 45 (`PenBatch`): the capability generation and the Mac's
+    /// main display size in points so Pad mode can aspect-fit its drawing surface when nothing streams.
+    public var pen: PenCapability?
 
     public init(macName: String, windows: [WindowInfo], active: StreamSource, launchID: String? = nil,
                 hostVersion: String? = nil, protocol: Int? = nil, gestures: Int? = nil, clipboard: Int? = nil) {
