@@ -1215,6 +1215,7 @@ struct StreamScreen: View {
                 // zoom, StreamZoom.unzoomedPoint).
                 InputOverlay(videoSize: client.videoSize,
                              send: { client.sendInput($0) },
+                             sendPen: client.hostPen != nil ? { client.sendPen($0) } : nil,
                              setOwnPointer: { client.setOwnPointer($0, from: $1) },
                              proxy: overlay,
                              isKeyboardShown: $keyboardShown,
