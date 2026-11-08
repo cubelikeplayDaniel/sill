@@ -1209,22 +1209,26 @@ struct StreamScreen: View {
             Color.black
 
             ZStack {
-                // Scaled and moved by the picture's zoom, inside the clip below.
-                ZoomedStreamView(client: client, zoom: zoom)
-                // Same frame as the video, so a touch maps straight onto the streamed frame (through the
-                // zoom, StreamZoom.unzoomedPoint).
-                InputOverlay(videoSize: client.videoSize,
-                             send: { client.sendInput($0) },
-                             sendPen: client.hostPen != nil ? { client.sendPen($0) } : nil,
-                             setOwnPointer: { client.setOwnPointer($0, from: $1) },
-                             proxy: overlay,
-                             isKeyboardShown: $keyboardShown,
-                             latchedModifiers: latched,
-                             onModifiersConsumed: { latched = [] },
-                             sendGesture: { client.sendGesture($0, fingers: $1) },
-                             macRepeatsKeys: { KeyTyping.macRepeats(keyRepeat: client.hostKeyRepeat) },
-                             readZoom: { [zoom] in zoom.zoom },
-                             writeZoom: { [zoom] in zoom.set($0) })
+                if client.padMode {
+                    PadCanvasView(client: client)
+                } else {
+                    // Scaled and moved by the picture's zoom, inside the clip below.
+                    ZoomedStreamView(client: client, zoom: zoom)
+                    // Same frame as the video, so a touch maps straight onto the streamed frame (through the
+                    // zoom, StreamZoom.unzoomedPoint).
+                    InputOverlay(videoSize: client.videoSize,
+                                 send: { client.sendInput($0) },
+                                 sendPen: client.hostPen != nil ? { client.sendPen($0) } : nil,
+                                 setOwnPointer: { client.setOwnPointer($0, from: $1) },
+                                 proxy: overlay,
+                                 isKeyboardShown: $keyboardShown,
+                                 latchedModifiers: latched,
+                                 onModifiersConsumed: { latched = [] },
+                                 sendGesture: { client.sendGesture($0, fingers: $1) },
+                                 macRepeatsKeys: { KeyTyping.macRepeats(keyRepeat: client.hostKeyRepeat) },
+                                 readZoom: { [zoom] in zoom.zoom },
+                                 writeZoom: { [zoom] in zoom.set($0) })
+                }
             }
             .background(Palette.panel)
             // A locked Mac: its cover over the picture (LockedMac), under the link's line.
@@ -1479,9 +1483,15 @@ private struct TopBar: View {
                 .allowsHitTesting(!scaleOpen)
                 .tourTarget(.keyboard)
 
-            button(open: client.active == .desktop, symbol: "desktopcomputer", label: "Desktop",
+            button(open: client.active == .desktop && !client.padMode, symbol: "desktopcomputer", label: "Desktop",
                    accessibilityLabel: "Show the full Mac desktop",
-                   action: { client.select(.desktop) })
+                   action: { client.setPadMode(false); client.select(.desktop) })
+                .opacity(scaleOpen ? 0 : 1)
+                .allowsHitTesting(!scaleOpen)
+
+            button(open: client.padMode, symbol: "rectangle.and.pencil.and.ellipsis", label: "Pad",
+                   accessibilityLabel: client.padMode ? "Switch to screen mirroring" : "Switch to screenless drawing pad",
+                   action: { client.setPadMode(!client.padMode) })
                 .opacity(scaleOpen ? 0 : 1)
                 .allowsHitTesting(!scaleOpen)
 
