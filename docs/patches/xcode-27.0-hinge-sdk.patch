@@ -1,0 +1,64 @@
+diff --git a/iOSClient/DuoPostureReader.swift b/iOSClient/DuoPostureReader.swift
+index 2fbc373..560558a 100644
+--- a/iOSClient/DuoPostureReader.swift
++++ b/iOSClient/DuoPostureReader.swift
+@@ -87,6 +87,7 @@ private struct DuoPostureReader: ViewModifier {
+     @State private var hinge: DuoPosture.Hinge = .unknown
+ 
+     func body(content: Content) -> some View {
++        #if SILL_HINGE_SDK
+         if #available(iOS 27.1, *) {
+             content
+                 .environment(\.duoEnvironment, DuoEnvironment(hinge: hinge))
+@@ -101,9 +102,13 @@ private struct DuoPostureReader: ViewModifier {
+         } else {
+             content
+         }
++        #else
++        content
++        #endif
+     }
+ }
+ 
++#if SILL_HINGE_SDK
+ @available(iOS 27.1, *)
+ extension DuoPosture.Hinge {
+     init(_ context: DeviceHingeContext) {
+@@ -118,6 +123,7 @@ extension DuoPosture.Hinge {
+         }
+     }
+ }
++#endif
+ 
+ extension DuoPosture {
+     /// The posture as the view `geo` measures sees it: the hinge from the environment (before its
+@@ -132,12 +138,14 @@ extension DuoPosture {
+             let origin = geo.frame(in: .named(displaySpace)).origin
+             return DuoPosture(hinge: environment.hinge, fold: fold?.offsetBy(dx: -origin.x, dy: -origin.y))
+         case .reservedRegions:
++            #if SILL_HINGE_SDK
+             if #available(iOS 27.1, *) {
+                 let region = geo.reservedRegions(kind: .division, options: .includeInactive).first
+                 let hinge = hinge(reported: environment.hinge, regionActive: region?.isActive)
+                 guard hinge != .unknown else { return .unknown }
+                 return DuoPosture(hinge: hinge, fold: region?.frame)
+             }
++            #endif
+             return .unknown
+         }
+     }
+diff --git a/iOSClient/InputOverlay.swift b/iOSClient/InputOverlay.swift
+index c5d4a2f..57e05f7 100644
+--- a/iOSClient/InputOverlay.swift
++++ b/iOSClient/InputOverlay.swift
+@@ -735,8 +735,10 @@ final class InputOverlayView: UIView, UITextInput, UIGestureRecognizerDelegate {
+     @objc var writingToolsBehavior: UIWritingToolsBehavior { get { .none } set {} }
+     @available(iOS 18.0, *)
+     @objc var mathExpressionCompletionType: UITextMathExpressionCompletionType { get { .no } set {} }
++    #if SILL_HINGE_SDK
+     @available(iOS 27.0, *)
+     @objc var grammarCheckingType: UITextGrammarCheckingType { get { .no } set {} }
++    #endif
+ 
+     /// Always true: there is text on the Mac, and the delete key has to keep working even though
+     /// this view holds no text of its own.

@@ -735,8 +735,10 @@ final class InputOverlayView: UIView, UITextInput, UIGestureRecognizerDelegate {
     @objc var writingToolsBehavior: UIWritingToolsBehavior { get { .none } set {} }
     @available(iOS 18.0, *)
     @objc var mathExpressionCompletionType: UITextMathExpressionCompletionType { get { .no } set {} }
+    #if SILL_HINGE_SDK
     @available(iOS 27.0, *)
     @objc var grammarCheckingType: UITextGrammarCheckingType { get { .no } set {} }
+    #endif
 
     /// Always true: there is text on the Mac, and the delete key has to keep working even though
     /// this view holds no text of its own.
