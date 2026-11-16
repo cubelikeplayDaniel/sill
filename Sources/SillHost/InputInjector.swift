@@ -80,6 +80,7 @@ final class InputInjector {
     private var lastKeyFlags: UInt64 = 0
     /// Where the last pointer event went: a synthetic host's pointer, which it never reads.
     private var lastPointerLocation: CGPoint = .zero
+    private var hasLastPointerLocation = false
     /// The streamed source's display's own pixel scale (StreamCoordinator sets it as each pipeline
     /// starts; nil for the test pattern): a position lands at most on that display's last pixel row
     /// and column (InputLanding).
@@ -247,12 +248,21 @@ final class InputInjector {
 
         guard let event = CGEvent(mouseEventSource: source, mouseType: type,
                                   mouseCursorPosition: location, mouseButton: button) else { return }
+        let dx = hasLastPointerLocation ? Int64((location.x - lastPointerLocation.x).rounded()) : 0
+        let dy = hasLastPointerLocation ? Int64((location.y - lastPointerLocation.y).rounded()) : 0
+        event.setIntegerValueField(.mouseEventDeltaX, value: dx)
+        event.setIntegerValueField(.mouseEventDeltaY, value: dy)
         if type != .mouseMoved { event.setIntegerValueField(.mouseEventClickState, value: clicks) }
         // One synthetic "finger": a constant event number keeps a down/drag/up sequence coherent.
         event.setIntegerValueField(.mouseEventNumber, value: 0)
         watch?.sillMoved(to: location)   // before the post (see `watch`); a dry run moves the scripted pointer
         lastPointerLocation = location
+        hasLastPointerLocation = true
         if post(event) { Stats.shared.bump("in.pointer") }
+    }
+
+    var isDragging: Bool {
+        left.isDown || right.isDown || pen.isPenDown
     }
 
     /// Whether this input is the up of a key or a button the Mac has down, which still goes when the

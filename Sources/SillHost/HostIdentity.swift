@@ -181,11 +181,15 @@ package final class MemoryIdentityStore: IdentityStore {
 /// list over the other's.
 package final class FileIdentityStore: IdentityStore {
     package let directory: URL
+    private let customSummary: String?
+    private let exposeTestDirectory: Bool
     /// The open `.lock`, flock'ed exclusively; closing it (or the process ending) lets it go.
     private let lock: Int32
 
-    package init(directory: URL) throws {
+    package init(directory: URL, summary: String? = nil, exposeTestDirectory: Bool = true) throws {
         self.directory = directory
+        self.customSummary = summary
+        self.exposeTestDirectory = exposeTestDirectory
         let fm = FileManager.default
         try fm.createDirectory(at: directory, withIntermediateDirectories: true, attributes: [.posixPermissions: 0o700])
         try fm.setAttributes([.posixPermissions: 0o700], ofItemAtPath: directory.path)
@@ -201,8 +205,8 @@ package final class FileIdentityStore: IdentityStore {
 
     deinit { close(lock) }
 
-    package var summary: String { "in the test directory \(directory.path)" }
-    package var testDirectory: URL? { directory }
+    package var summary: String { customSummary ?? "in the test directory \(directory.path)" }
+    package var testDirectory: URL? { exposeTestDirectory ? directory : nil }
 
     package func loadOrCreateKey() throws -> SecKey {
         let url = directory.appendingPathComponent("host-key")

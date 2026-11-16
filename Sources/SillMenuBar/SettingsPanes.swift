@@ -97,13 +97,13 @@ private struct GeneralPane: View {
     var body: some View {
         Form {
             Section {
-                Toggle("Launch at login", isOn: Binding(get: { model.loginItem.isOn }, set: { model.loginItem.set($0) }))
+                Toggle("开机自动启动", isOn: Binding(get: { model.loginItem.isOn }, set: { model.loginItem.set($0) }))
                     .disabled(!model.loginItem.available)
                 if !model.loginItem.available {
-                    Footnote("Available when Sill runs from its app bundle.")
+                    Footnote("仅当从应用程序包 (.app) 运行 Sill 时可用。")
                 } else if model.loginItem.needsApproval {
-                    LabeledContent("Waiting for your approval") {
-                        Button("Approve in System Settings…") { model.loginItem.openSystemSettings() }
+                    LabeledContent("等待系统批准") {
+                        Button("在系统设置中批准…") { model.loginItem.openSystemSettings() }
                     }
                 }
                 if let error = model.loginItem.error {
@@ -111,26 +111,26 @@ private struct GeneralPane: View {
                 }
             }
             Section {
-                LabeledContent("Running from") {
+                LabeledContent("运行位置") {
                     Text(Bundle.main.bundlePath)
                         .lineLimit(1)
                         .truncationMode(.middle)
                         .textSelection(.enabled)
                 }
                 if !Self.runsFromApplications {
-                    Label("The login item and the permissions follow this copy of Sill. Keep one copy, in Applications.",
+                    Label("登录项和系统权限均绑定此 Sill 副本。建议仅在“应用程序”文件夹中保留一份副本。",
                           systemImage: "exclamationmark.triangle.fill")
                         .foregroundStyle(.orange)
                 }
             }
             Section {
-                LabeledContent("Visible on your network as") { Text(networkName) }
+                LabeledContent("局域网显示名称") { Text(networkName) }
             } footer: {
                 HStack(spacing: 4) {
-                    Text("This is the Mac’s name.")
+                    Text("这是此 Mac 的电脑名称。")
                         .font(.footnote)
                         .foregroundStyle(.secondary)
-                    Button("Change It in Sharing Settings…") {
+                    Button("在“共享”设置中修改…") {
                         if let url = URL(string: "x-apple.systempreferences:com.apple.Sharing-Settings.extension") {
                             NSWorkspace.shared.open(url)
                         }
@@ -149,9 +149,9 @@ private struct GeneralPane: View {
             // restarting the stream (the listener is replaced); enabled in test pattern mode too,
             // where it is saved and changes only the listener.
             Section {
-                Toggle("Direct wireless connection", isOn: $settings.config.directWireless)
+                Toggle("无线直连", isOn: $settings.config.directWireless)
             } footer: {
-                Footnote("Lets your iPhone and iPad connect when they’re near this Mac, even without a shared Wi\u{2011}Fi network, the way AirDrop does. While it’s on, this Mac’s Wi\u{2011}Fi keeps stepping away from your network, so streaming over Wi\u{2011}Fi can stutter. Anyone nearby with Sill can find this Mac; only devices you paired can connect, unless Require pairing is off.")
+                Footnote("让附近的 iPad 或 iPhone 即使未连接同一 Wi\u{2011}Fi 也能像隔空投送 (AirDrop) 一样直连此 Mac。开启后 Wi\u{2011}Fi 串流可能偶尔出现卡顿。仅已配对的设备可以连接（除非关闭了“需要配对”）。")
             }
             // The clipboard both ways (HostClipboard): at once, no restart. Each device has its own
             // switch too. macOS's answer is read with the permissions (once a second while this pane
@@ -168,8 +168,8 @@ private struct GeneralPane: View {
             }
             Section {
                 HStack {
-                    Button("Show Log…") { model.showLog?() }
-                    Button("Reveal Log File") {
+                    Button("查看日志…") { model.showLog?() }
+                    Button("在访达中显示日志文件") {
                         if let url = HostLog.shared.fileURL { NSWorkspace.shared.activateFileViewerSelecting([url]) }
                     }
                     .disabled(HostLog.shared.fileURL == nil)
@@ -177,9 +177,9 @@ private struct GeneralPane: View {
             }
             Section {
                 // A way out when the status item is hidden (a crowded menu bar, the notch).
-                Button("Quit Sill") { NSApp.terminate(nil) }
+                Button("退出 Sill") { NSApp.terminate(nil) }
             } footer: {
-                Footnote("Sill \(AppModel.version) (\(AppModel.build)). Free and open source.")
+                Footnote("Sill \(AppModel.version) (\(AppModel.build)) · 免费开源软件。")
             }
         }
     }
@@ -188,10 +188,10 @@ private struct GeneralPane: View {
         let snapshot = model.coordinator?.status.snapshot ?? HostStatusSnapshot()
         switch snapshot.network {
         case .advertising(let name): return "“\(name)”"
-        case .notAdvertised: return "Not advertised (test pattern mode)"
-        case .failed: return "Not visible (the listener failed)"
-        case .waiting: return "Not yet (waiting for the network)"
-        case .starting, .registering: return "Registering…"
+        case .notAdvertised: return "未广播（测试画面模式）"
+        case .failed: return "不可见（监听器启动失败）"
+        case .waiting: return "暂不可见（正在等待网络）"
+        case .starting, .registering: return "正在注册…"
         }
     }
 }
@@ -216,12 +216,12 @@ struct FirewallSection: View {
                         Image(systemName: "exclamationmark.triangle.fill")
                             .foregroundStyle(.orange)
                         if let command {
-                            Button(copied ? "Copied" : "Copy") { copy(command) }
-                                .help("Copies the command, to paste into Terminal")
+                            Button(copied ? "已拷贝" : "拷贝") { copy(command) }
+                                .help("拷贝命令以粘贴到终端运行")
                         }
                     }
                 } label: {
-                    Text("Firewall")
+                    Text("防火墙")
                     Text(line)
                 }
                 if let lines = FirewallRule.Copy.commandLines(verdict) {
@@ -262,7 +262,7 @@ struct ClipboardSection: View {
 
     var body: some View {
         Section {
-            Toggle("Share clipboard with devices", isOn: $shareClipboard)
+            Toggle("与设备共享剪贴板", isOn: $shareClipboard)
             if shareClipboard, let warning = ClipboardPolicy.Copy.macAccessWarning(access) {
                 VStack(alignment: .leading, spacing: 6) {
                     Warning(warning)
@@ -298,13 +298,13 @@ struct UpdatesSection: View {
 
     var body: some View {
         Section {
-            Toggle("Check for updates automatically", isOn: $automatic)
+            Toggle("自动检查更新", isOn: $automatic)
             LabeledContent {
                 HStack(spacing: 8) {
                     if let url = pane.releasePage {
-                        Button("Open Release Page…") { actions.openRelease(url) }
+                        Button("打开发布页面…") { actions.openRelease(url) }
                     }
-                    Button("Check Now") { actions.checkNow() }
+                    Button("立即检查") { actions.checkNow() }
                         .disabled(!pane.canCheck)
                 }
             } label: {
@@ -331,64 +331,64 @@ private struct StreamingPane: View {
     var body: some View {
         Form {
             Section {
-                Picker("Frame rate limit", selection: $settings.config.maxFPS) {
+                Picker("帧率上限", selection: $settings.config.maxFPS) {
                     Text("60 fps").tag(60)
                     Text("120 fps").tag(120)
                 }
                 .pickerStyle(.segmented)
-                Picker("Quality", selection: $settings.config.bitrate) {
+                Picker("画质", selection: $settings.config.bitrate) {
                     ForEach(QualityPreset.allCases) { Text($0.title).tag($0.rawValue) }
                     if QualityPreset(rawValue: settings.config.bitrate) == nil {
                         Text(QualityPreset.title(forBitrate: settings.config.bitrate)).tag(settings.config.bitrate)
                     }
                 }
-                Picker("Resolution", selection: $settings.config.captureScale) {
-                    Text("Retina").tag(CGFloat(2))
-                    Text("Standard").tag(CGFloat(1))
+                Picker("分辨率", selection: $settings.config.captureScale) {
+                    Text("视网膜 (Retina)").tag(CGFloat(2))
+                    Text("标准").tag(CGFloat(1))
                 }
             } footer: {
-                Footnote("Each device asks for its own screen’s rate, up to this limit. Quality is per 60 fps; a 120 fps stream gets twice as much. \(QualityPreset.fastLinkNote) Changes apply at once: the current stream restarts for a moment.")
+                Footnote("每台设备会按自身屏幕刷新率请求帧率（不超过此上限）。画质按 60 fps 计算；120 fps 串流码率翻倍。修改后立即生效。")
             }
             // Away from home (docs/remote-bundle-plan.md §5): its own quality, which a device away
             // sets too; the menu's Quality and Resolution stay the home ones.
             Section {
-                Picker("Quality", selection: $settings.config.awayBitrate) {
+                Picker("画质", selection: $settings.config.awayBitrate) {
                     ForEach(QualityPreset.allCases) { Text($0.title).tag($0.rawValue) }
                     if QualityPreset(rawValue: settings.config.awayBitrate) == nil {
                         Text(QualityPreset.title(forBitrate: settings.config.awayBitrate)).tag(settings.config.awayBitrate)
                     }
                 }
-                Picker("Resolution", selection: $settings.config.awayCaptureScale) {
-                    Text("Retina").tag(CGFloat(2))
-                    Text("Standard").tag(CGFloat(1))
+                Picker("分辨率", selection: $settings.config.awayCaptureScale) {
+                    Text("视网膜 (Retina)").tag(CGFloat(2))
+                    Text("标准").tag(CGFloat(1))
                 }
             } header: {
-                Text("Away from home")
+                Text("远程网络（异地连接）")
             } footer: {
-                Footnote("Sill streams at these while every connected device is away from home, through a VPN or over the internet, so a slow connection never starts at your home quality. A device away from home changes these, and never your Quality and Resolution above."
-                         + (model.coordinator?.status.snapshot.away == true ? " Streaming at these now." : ""))
+                Footnote("当连接的设备均通过 VPN 或互联网远程访问时，使用此画质与分辨率，避免慢速网络下直接以局域网高码率启动。"
+                         + (model.coordinator?.status.snapshot.away == true ? " 当前正在使用此套参数串流。" : ""))
             }
             Section {
-                Toggle("Prioritize encoding speed", isOn: $settings.config.prioritizeSpeed)
+                Toggle("优先保证编码速度", isOn: $settings.config.prioritizeSpeed)
             } footer: {
-                Footnote("Lower latency when the Mac is busy, at a softer picture.")
+                Footnote("在 Mac 高负载时降低画面延迟，画面细节会略微柔和。")
             }
             // The Mac's sound (docs/audio-plan.md §6), a beta: its switch and its footnote say so. A device's
             // Settings panel turns it on and off too, for every device, and mutes it for that device alone
             // (Q8 as Noah revised it on 2026-10-27).
             Section {
-                Toggle("Send audio (beta)", isOn: $settings.config.sendAudio)
+                Toggle("发送音频（测试版）", isOn: $settings.config.sendAudio)
                 if settings.config.sendAudio, let problem = model.coordinator?.status.snapshot.audio?.problem {
-                    Warning("Sill \(problem). The picture is unaffected.")
+                    Warning("Sill \(problem)。画面传输不受影响。")
                 }
             } footer: {
-                Footnote("Beta. Devices play the sound of what you stream: all of the streamed window’s app, or every app for the Desktop. The Mac keeps playing it too. A connected iPhone or iPad can also turn this on or off from Sill’s settings there, and mute it for itself alone. Nothing is recorded.")
+                Footnote("测试版功能。将所选应用窗口或整个桌面的声音同步传输到 iPad/iPhone，Mac 本机也会继续播放声音。已连接的设备可在其设置面板中单独静音。")
             }
             if let snapshot = model.coordinator?.status.snapshot, snapshot.softwareEncoder {
                 Section {
                     Label(snapshot.hardwareEncoderStuck
-                          ? "The hardware encoder is stuck, so streams use the software encoder: up to 60 fps at Standard resolution. Restarting the Mac fixes this."
-                          : "The hardware encoder is busy or not answering, so streams use the software encoder: up to 60 fps at Standard resolution. Sill switches back by itself once it keeps up again.",
+                          ? "硬件编码器卡住，当前使用软件编码（最高 60 fps、标准分辨率）。重启 Mac 可修复此问题。"
+                          : "硬件编码器繁忙或无响应，当前使用软件编码（最高 60 fps、标准分辨率）。恢复空闲后将自动切回硬件编码。",
                           systemImage: "exclamationmark.triangle.fill")
                         .foregroundStyle(.orange)
                 }
@@ -408,17 +408,17 @@ private struct VirtualDisplayPane: View {
         let snapshot = model.coordinator?.status.snapshot ?? HostStatusSnapshot()
         Form {
             Section {
-                Toggle("Stream from a virtual display", isOn: $settings.config.virtualDisplay)
+                Toggle("使用虚拟显示器串流单窗口", isOn: $settings.config.virtualDisplay)
             } footer: {
-                Footnote("Sill moves the window you pick onto an invisible display made for your device, so it keeps updating when other windows cover it and text is drawn at your device’s scale. The window leaves this screen while it streams and comes back when you stop streaming or quit Sill.")
+                Footnote("Sill 会将你在 iPad 上选中的单个应用窗口移至专门创建的隐藏虚拟显示器上，这样即使 Mac 上有其他窗口遮挡也能持续刷新，并按 iPad 屏幕比例清晰渲染。停止串流或退出 Sill 时窗口会自动移回原屏幕。")
             }
             Section {
-                LabeledContent("Status") {
+                LabeledContent("状态") {
                     HStack(spacing: 8) {
                         Text(statusText(snapshot))
                             .multilineTextAlignment(.trailing)
                         if canRetry(snapshot) {
-                            Button("Try Again") {
+                            Button("重试") {
                                 retrying = true
                                 Task { @MainActor in
                                     await model.coordinator?.retryVirtualDisplay()
@@ -430,12 +430,12 @@ private struct VirtualDisplayPane: View {
                     }
                 }
                 if settings.config.virtualDisplay, let failure = snapshot.lastStageFailure {
-                    LabeledContent("Last window") {
-                        Text("Streamed where it is: \(failure)").multilineTextAlignment(.trailing)
+                    LabeledContent("最近窗口") {
+                        Text("在原屏幕串流：\(failure)").multilineTextAlignment(.trailing)
                     }
                 }
             } footer: {
-                Footnote("Uses a private macOS interface (CGVirtualDisplay). If a macOS update breaks it, Sill streams the window where it is.")
+                Footnote("使用 macOS 私有接口 (CGVirtualDisplay)。若系统更新导致不可用，Sill 会自动回退为直接在原屏幕捕获窗口。")
             }
         }
     }
@@ -443,13 +443,13 @@ private struct VirtualDisplayPane: View {
     private func statusText(_ s: HostStatusSnapshot) -> String {
         let sr = model.permissions.screenRecording, ax = model.permissions.accessibility
         if s.virtualDisplayAPIMissing, let problem = s.virtualDisplayProblem {
-            return "Not available on this version of macOS: \(problem)"
+            return "当前 macOS 版本不可用：\(problem)"
         }
-        if !sr && !ax { return "Needs Screen Recording and Accessibility" }
-        if !ax { return "Needs Accessibility" }
-        if !sr { return "Needs Screen Recording" }
-        if let problem = s.virtualDisplayProblem { return "Off for this session: \(problem)" }
-        return "Available"
+        if !sr && !ax { return "需要“录屏与系统录音”和“辅助功能”权限" }
+        if !ax { return "需要“辅助功能”权限" }
+        if !sr { return "需要“录屏与系统录音”权限" }
+        if let problem = s.virtualDisplayProblem { return "本次会话已停用：\(problem)" }
+        return "可用"
     }
 
     /// A run-level disable (the system removed the display too often) can be retried; a missing
@@ -469,40 +469,40 @@ private struct PermissionsPane: View {
         let network = model.coordinator?.status.snapshot.network
         Form {
             Section {
-                PermissionRow(title: "Screen Recording", allowed: permissions.screenRecording,
+                PermissionRow(title: "录屏与系统录音", allowed: permissions.screenRecording,
                               // Not "on this network": a device connected over Direct Wireless shares none.
-                              explanation: "Lets Sill capture the windows you pick on your iPhone or iPad, and their sound when Send Audio is on. Nothing is recorded or saved; frames and sound go straight to your devices.",
-                              button: model.settings.askedScreenRecording ? "Open System Settings…" : "Allow…") {
+                              explanation: "允许 Sill 捕获你在 iPad 或 iPhone 上选择的 Mac 窗口或桌面画面（以及开启“发送音频”时的系统声音）。所有画面与声音仅实时传输给你的设备，绝不录制或保存。",
+                              button: model.settings.askedScreenRecording ? "打开系统设置…" : "授权…") {
                     permissions.requestScreenRecording()
                 }
-                PermissionRow(title: "Accessibility", allowed: permissions.accessibility,
-                              explanation: "Lets your iPhone or iPad click, scroll and type on this Mac, and lets Sill move and size the window it streams.",
-                              button: model.settings.askedAccessibility ? "Open System Settings…" : "Allow…") {
+                PermissionRow(title: "辅助功能", allowed: permissions.accessibility,
+                              explanation: "允许 iPad 或 iPhone 在此 Mac 上点击、滚动、使用 Apple Pencil 压感绘画以及手写/键盘输入文字，并允许调整串流窗口大小。",
+                              button: model.settings.askedAccessibility ? "打开系统设置…" : "授权…") {
                     permissions.requestAccessibility()
                 }
             } footer: {
-                Footnote("Access belongs to Sill itself. Access you gave Terminal for the SillHost command-line tool doesn’t carry over.")
+                Footnote("权限绑定于 Sill 应用本身。")
             }
             if permissions.relaunchSuggested, !permissions.screenRecording {
                 Section {
-                    LabeledContent("Screen Recording starts working once Sill opens again.") {
-                        Button(permissions.canRelaunch ? "Relaunch Sill" : "Quit Sill") { permissions.relaunch() }
+                    LabeledContent("重新打开 Sill 后录屏权限即可生效。") {
+                        Button(permissions.canRelaunch ? "重新打开 Sill" : "退出 Sill") { permissions.relaunch() }
                     }
                 }
             }
             if Self.networkNeedsHelp(network) {
                 Section {
                     LabeledContent {
-                        Button("Open Local Network…") { permissions.openPrivacyPane("Privacy_LocalNetwork") }
+                        Button("打开本地网络设置…") { permissions.openPrivacyPane("Privacy_LocalNetwork") }
                     } label: {
-                        Text("Local Network")
-                        Text("If your iPhone or iPad can’t find this Mac, allow Sill in Privacy & Security › Local Network.")
+                        Text("本地网络")
+                        Text("如果 iPad 或 iPhone 找不到此 Mac，请在“隐私与安全性 › 本地网络”中允许 Sill。")
                     }
                 }
             }
             if permissions.allGranted {
                 Section {
-                    Label("You’re all set. Open Sill on your iPhone or iPad.", systemImage: "checkmark.seal.fill")
+                    Label("权限已全部就绪！请在 iPad 或 iPhone 上打开 Sill 连接。", systemImage: "checkmark.seal.fill")
                 }
             }
         }
@@ -526,7 +526,7 @@ private struct PermissionRow: View {
     var body: some View {
         LabeledContent {
             if allowed {
-                Label("Allowed", systemImage: "checkmark.circle.fill")
+                Label("已授权", systemImage: "checkmark.circle.fill")
                     .foregroundStyle(.green)
             } else {
                 HStack(spacing: 6) {

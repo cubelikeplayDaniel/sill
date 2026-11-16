@@ -1112,9 +1112,9 @@ struct ConnectScreen: View {
     /// "Pair with Mac mini" over the home card; "Add a Mac" over Add a Mac and an outside link's
     /// confirmation.
     private var title: String {
-        if client.pendingLink != nil || adding { return "Add a Mac" }
+        if client.pendingLink != nil || adding { return "添加 Mac" }
         if let mac = homeCard { return DiscoveryPolicy.HomeCopy.cardTitle(mac: mac) }
-        return "Connect to a Mac"
+        return "连接到 Mac"
     }
 
     private var device: String { StreamClient.deviceWord }
@@ -1191,13 +1191,13 @@ struct ConnectScreen: View {
             .duoLog(posture, size: geo.size, screen: "connect screen")
         }
         .ignoresSafeArea(.keyboard, edges: .bottom)
-        .alert("New Group", isPresented: Binding(get: { newGroupFor != nil }, set: { if !$0 { newGroupFor = nil } })) {
-            TextField("Name", text: $newGroupName)
+        .alert("新建分组", isPresented: Binding(get: { newGroupFor != nil }, set: { if !$0 { newGroupFor = nil } })) {
+            TextField("名称", text: $newGroupName)
             // A blank name, or Other (where the Macs with no group already are), names no group: Add
             // would only take the Mac out of the one it is in.
-            Button("Add") { if let id = newGroupFor { client.setGroup(newGroupName, for: id) } }
+            Button("添加") { if let id = newGroupFor { client.setGroup(newGroupName, for: id) } }
                 .disabled(ConnectionList.cleanGroup(newGroupName) == nil)
-            Button("Cancel", role: .cancel) {}
+            Button("取消", role: .cancel) {}
         }
         // The switch beside the title or a saved Mac's menu: the list hides the pictures and keeps their
         // files, and tiles show them again at once (ConnectionList.previewPlan); none is taken while the
@@ -1393,7 +1393,7 @@ struct ConnectScreen: View {
         }
 
         if client.showsNearbyHint {
-            Text("Your Mac has to be on the same Wi\u{2011}Fi network as this \(device), or have Direct Wireless Connection turned on in Sill. Away from home, add it once with a code from your Mac.")
+            Text("请确保 Mac 与此 \(device) 连接在同一 Wi\u{2011}Fi 网络下，或在 Mac 的 Sill 菜单中开启“无线直连”。若在外网环境，请使用 Mac 上的配对码添加一次。")
                 .font(.system(size: 13))
                 .foregroundStyle(Palette.muted)
                 .fixedSize(horizontal: false, vertical: true)
@@ -1402,7 +1402,7 @@ struct ConnectScreen: View {
             // status line says (a disconnect's message stays there), at the button's height so
             // nothing moves.
             if client.searchingNearby {
-                Text("Also looking nearby")
+                Text("正在同时搜索附近设备")
                     .font(.system(size: 15))
                     .foregroundStyle(Palette.muted)
                     .frame(maxWidth: .infinity, minHeight: 44, alignment: .leading)
@@ -1411,9 +1411,9 @@ struct ConnectScreen: View {
                 Button(action: {
                     client.searchNearby()
                     // The button leaves from under VoiceOver's cursor: say what it started.
-                    AccessibilityNotification.Announcement("Also looking nearby").post()
+                    AccessibilityNotification.Announcement("正在同时搜索附近设备").post()
                 }) {
-                    Text("Search Nearby")
+                    Text("搜索附近设备")
                         .font(.system(size: 15, weight: .semibold))
                         .foregroundStyle(Palette.accent)
                         .frame(maxWidth: .infinity, minHeight: 44, alignment: .leading)
@@ -1421,13 +1421,13 @@ struct ConnectScreen: View {
                         .contentShape(Rectangle())
                 }
                 .buttonStyle(.plain)
-                .accessibilityHint("Also looks for a Mac with Direct Wireless Connection turned on, without a Wi\u{2011}Fi network.")
+                .accessibilityHint("无需共用 Wi\u{2011}Fi 网络，搜索开启了“无线直连”的附近 Mac。")
             }
         }
 
         // Always the last line, from the first frame, so nothing moves when it is needed.
         Button(action: unfold) {
-            Text("Add a Mac…")
+            Text("添加 Mac…")
                 .font(.system(size: 15, weight: .semibold))
                 .foregroundStyle(Palette.accent)
                 .frame(maxWidth: .infinity, minHeight: 44, alignment: .leading)
@@ -1435,7 +1435,7 @@ struct ConnectScreen: View {
                 .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
-        .accessibilityHint("Pairs this \(device) with a Mac so you can reach it away from home.")
+        .accessibilityHint("将此 \(device) 与 Mac 配对，以便从外网连接。")
     }
 
     /// A saved Mac's row or tile: Connect (a Remote row) or Connect Remotely (its network row, to
@@ -1444,16 +1444,16 @@ struct ConnectScreen: View {
     @ViewBuilder private func menu(for mac: FoundMac) -> some View {
         if let id = mac.macID {
             if mac.route == .remote {
-                Button { client.connect(to: mac) } label: { Label("Connect", systemImage: "globe") }
+                Button { client.connect(to: mac) } label: { Label("连接", systemImage: "globe") }
             } else if mac.route == .network {
-                Button { client.connectRemotely(id) } label: { Label("Connect Remotely", systemImage: "globe") }
+                Button { client.connectRemotely(id) } label: { Label("远程连接", systemImage: "globe") }
             }
             let currentGroup = ConnectionList.cleanGroup(client.macGroups[id])
             Menu {
                 // One choice of None and the groups: the system's checkmark on the current one, and
                 // VoiceOver's "selected".
-                Picker("Group", selection: Binding(get: { currentGroup }, set: { client.setGroup($0, for: id) })) {
-                    Text("None").tag(String?.none)
+                Picker("分组", selection: Binding(get: { currentGroup }, set: { client.setGroup($0, for: id) })) {
+                    Text("无").tag(String?.none)
                     ForEach(ConnectionList.availableGroups(in: client.macGroups), id: \.self) { group in
                         Text(group).tag(String?.some(group))
                     }
@@ -1461,24 +1461,24 @@ struct ConnectScreen: View {
                 .pickerStyle(.inline)
                 Divider()
                 Button { newGroupName = ""; newGroupFor = id } label: {
-                    Label("New Group…", systemImage: "folder.badge.plus")
+                    Label("新建分组…", systemImage: "folder.badge.plus")
                 }
             } label: {
-                Label(currentGroup.map { "Group: \($0)" } ?? "Group", systemImage: "folder")
+                Label(currentGroup.map { "分组：\($0)" } ?? "分组", systemImage: "folder")
             }
             Button {
                 toggleStyle()
             } label: {
-                Label(style == .tiles ? "Show as List" : "Show as Tiles",
+                Label(style == .tiles ? "显示为列表" : "显示为网格",
                       systemImage: style == .tiles ? "list.bullet" : "square.grid.2x2")
             }
             if style == .tiles, client.macPreviews[id] != nil {
                 Button(role: .destructive) { client.removePreview(for: id) } label: {
-                    Label("Remove Preview Picture", systemImage: "photo.badge.minus")
+                    Label("移除预览图", systemImage: "photo.badge.minus")
                 }
             }
             let name = client.savedMac(id) != nil ? client.displayName(id) : mac.name
-            Button(role: .destructive) { client.forget(id) } label: { Label("Forget \(name)", systemImage: "trash") }
+            Button(role: .destructive) { client.forget(id) } label: { Label("忽略 \(name)", systemImage: "trash") }
         }
     }
 
@@ -1622,7 +1622,7 @@ struct ConnectScreen: View {
     /// openURL), and VoiceOver reads it as a link. The addresses are SillLinks'.
     private func footer(_ layout: ConnectLayout) -> some View {
         VStack(alignment: .leading, spacing: 8) {
-            Text("Needs the free Sill app on your Mac.")
+            Text("需要在 Mac 上运行免费的 Sill 伴侣端应用。")
                 .foregroundStyle(Palette.muted)
                 .fixedSize(horizontal: false, vertical: true)
             // All three on one line while they fit, else the download link over the other two,
@@ -1654,15 +1654,15 @@ struct ConnectScreen: View {
     }
 
     private var downloadLink: some View {
-        footerLink("Get it at \(SillLinks.siteName)", to: SillLinks.download)
+        footerLink("前往 \(SillLinks.siteName) 下载", to: SillLinks.download)
     }
 
     /// Support, then the privacy policy, on one line.
     private var supportAndPrivacy: some View {
         HStack(spacing: 0) {
-            footerLink("Support", to: SillLinks.support)
+            footerLink("帮助与支持", to: SillLinks.support)
             linkSeparator
-            footerLink("Privacy Policy", to: SillLinks.privacy)
+            footerLink("隐私政策", to: SillLinks.privacy)
         }
     }
 

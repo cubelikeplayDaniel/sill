@@ -28,15 +28,17 @@ public struct PenSample: Codable, Equatable, Sendable {
     public var pressure: Double  // 0…1 (0 while hovering or lifting)
     public var altitude: Double  // radians: 0 flat on the glass, π/2 upright
     public var azimuth: Double   // radians in the view's plane: 0 right, π/2 down
+    public var t: Double?        // device timestamp in seconds (UITouch.timestamp)
 
     public init(phase: Int, x: Double, y: Double, pressure: Double = 0,
-                altitude: Double = .pi / 2, azimuth: Double = 0) {
+                altitude: Double = .pi / 2, azimuth: Double = 0, t: Double? = nil) {
         self.phase = phase
         self.x = x
         self.y = y
         self.pressure = pressure
         self.altitude = altitude
         self.azimuth = azimuth
+        self.t = t
     }
 }
 
@@ -97,9 +99,10 @@ public enum Pen {
             let touching = raw.phase == PenPhase.down || raw.phase == PenPhase.drag
             let pressure = touching ? min(max(raw.pressure, 0), 1) : 0
             let altitude = min(max(raw.altitude, 0), .pi / 2)
+            let t = (raw.t?.isFinite == true && (raw.t ?? 0) >= 0) ? raw.t : nil
             out.append(PenSample(
                 phase: raw.phase, x: x, y: y,
-                pressure: pressure, altitude: altitude, azimuth: raw.azimuth))
+                pressure: pressure, altitude: altitude, azimuth: raw.azimuth, t: t))
         }
         return out
     }
@@ -138,6 +141,120 @@ public enum Pen {
         let fx = min(max(Double((point.x - rect.minX) / rect.width), 0), 1)
         let fy = min(max(Double((point.y - rect.minY) / rect.height), 0), 1)
         return (fx, fy)
+    }
+
+    /// Maps raw UIKit Apple Pencil force (`0…maximumPossibleForce`, typically `0…6.667`) to a
+    /// natural drawing tablet pressure (`0…1`) with temporal low-pass smoothing and protection
+    /// against unconfirmed UIKit coalesced force estimates (`isEstimated`).
+    public static func mapPressure(force: Double, maxForce: Double, previous: Double = 0, isEstimated: Bool = false) -> Double {
+        guard maxForce > 0, force.isFinite, maxForce.isFinite else { return 0.5 }
+        guard force > 0 else { return previous > 0 ? max(0.02, previous * 0.5) : 0.02 }
+        let effectiveMax = max(maxForce * 0.80, 0.5)
+        let normalized = min(max(force / effectiveMax, 0), 1)
+        let curved = pow(normalized, 0.90)
+        guard previous > 0 else { return min(max(curved, 0.02), 1.0) }
+        // When UIKit marks the force on the trailing coalesced touch as an estimate awaiting update,
+        // weight heavily toward `previous` so frame boundaries never pulse the stroke width.
+        let alpha = isEstimated ? 0.15 : 0.35
+        let smoothed = alpha * curved + (1.0 - alpha) * previous
+        return min(max(smoothed, 0.02), 1.0)
+    }
+
+    /// Velocity-adaptive anti-jitter EMA filter for normalized `(0…1, 0…1)` coordinates.
+    /// Strong smoothing (`alpha = 0.42`) damps hand/digitizer micro-jitter when moving slowly,
+    /// ramping smoothly up to `0.92` for fast strokes with negligible latency.
+    public static func smooth(raw: (x: Double, y: Double),
+                              previous: (x: Double, y: Double)?) -> (x: Double, y: Double) {
+        guard let previous else { return raw }
+        let dist = hypot(raw.x - previous.x, raw.y - previous.y)
+        let alpha = min(0.92, max(0.42, 0.42 + dist * 38.0))
+        return (previous.x + alpha * (raw.x - previous.x),
+                previous.y + alpha * (raw.y - previous.y))
+    }
+}
+
+/// 1€ Filter (Casiez et al., CHI 2012) for Apple Pencil high-frequency input (240 Hz).
+/// Eliminates slow digitizer capacitive grid ripple (wobble/jitter) with a low cutoff frequency at low speed,
+/// while dynamically opening cutoff with movement velocity to eliminate tracking lag at high speed.
+public struct PenFilter: Sendable, Equatable {
+    public var minCutoff: Double
+    public var beta: Double
+    public var dCutoff: Double
+
+    private var xPrev: Double?
+    private var yPrev: Double?
+    private var rawXPrev: Double?
+    private var rawYPrev: Double?
+    private var tPrev: Double?
+    private var dxPrev: Double = 0
+    private var dyPrev: Double = 0
+
+    public init(minCutoff: Double = 1.10, beta: Double = 11.0, dCutoff: Double = 4.0) {
+        self.minCutoff = minCutoff
+        self.beta = beta
+        self.dCutoff = dCutoff
+    }
+
+    public mutating func reset() {
+        xPrev = nil
+        yPrev = nil
+        rawXPrev = nil
+        rawYPrev = nil
+        tPrev = nil
+        dxPrev = 0
+        dyPrev = 0
+    }
+
+    private func alpha(rate: Double, cutoff: Double) -> Double {
+        let tau = 1.0 / (2.0 * .pi * cutoff)
+        let te = 1.0 / rate
+        return 1.0 / (1.0 + tau / te)
+    }
+
+    public mutating func apply(rawX: Double, rawY: Double, timestamp: Double? = nil, rate: Double = 240.0) -> (x: Double, y: Double) {
+        let effectiveRate: Double
+        if let t = timestamp, let tp = tPrev, t > tp {
+            let dt = t - tp
+            effectiveRate = min(max(1.0 / dt, 60.0), 480.0)
+        } else {
+            effectiveRate = rate
+        }
+        tPrev = timestamp
+
+        guard let xp = xPrev, let yp = yPrev, let rxp = rawXPrev, let ryp = rawYPrev else {
+            xPrev = rawX
+            yPrev = rawY
+            rawXPrev = rawX
+            rawYPrev = rawY
+            dxPrev = 0
+            dyPrev = 0
+            return (rawX, rawY)
+        }
+
+        // 1. Raw displacement rate in normalized (0...1) coordinates per second
+        let dx = (rawX - rxp) * effectiveRate
+        let dy = (rawY - ryp) * effectiveRate
+        rawXPrev = rawX
+        rawYPrev = rawY
+
+        // 2. Low-pass filter the derivative to eliminate high-frequency ripple from velocity estimate
+        let aD = alpha(rate: effectiveRate, cutoff: dCutoff)
+        let dxHat = aD * dx + (1.0 - aD) * dxPrev
+        let dyHat = aD * dy + (1.0 - aD) * dyPrev
+        dxPrev = dxHat
+        dyPrev = dyHat
+
+        // 3. Dynamic cutoff based on true movement speed
+        let speed = hypot(dxHat, dyHat)
+        let cutoff = minCutoff + beta * speed
+        let a = alpha(rate: effectiveRate, cutoff: cutoff)
+
+        // 4. Smooth coordinate
+        let xHat = a * rawX + (1.0 - a) * xp
+        let yHat = a * rawY + (1.0 - a) * yp
+        xPrev = xHat
+        yPrev = yHat
+        return (xHat, yHat)
     }
 }
 

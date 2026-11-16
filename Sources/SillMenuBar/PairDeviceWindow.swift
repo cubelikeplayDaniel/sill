@@ -37,7 +37,7 @@ final class PairDeviceWindowController: NSWindowController, NSWindowDelegate {
         self.model = model
         let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 440, height: 600), styleMask: [.titled, .closable],
                               backing: .buffered, defer: true)
-        window.title = "Pair iPhone or iPad"
+        window.title = "配对 iPhone 或 iPad"
         window.isReleasedWhenClosed = false
         window.collectionBehavior.insert([.moveToActiveSpace, .fullScreenAuxiliary])
         // Before the window is ever on screen (`show` sets it again with its offer).
@@ -157,8 +157,8 @@ struct PairDeviceView: View {
             // A device-opened window is the home door's: the remote door's state is not its own.
             if offer.byDevice { return .waiting(triesLeft: triesLeft, wrongFrom: wrongFrom) }
             switch status.listener {
-            case .portInUse(let p): return .doorDown("Can’t pair while port \(p) is in use.")
-            case .failed: return .doorDown("Can’t pair: remote access couldn’t start. Sill tries again every 30 seconds.")
+            case .portInUse(let p): return .doorDown("无法配对：端口 \(p) 已被占用。")
+            case .failed: return .doorDown("无法配对：远程访问未能启动。Sill 每 30 秒会自动重试。")
             case .off, .listening: return .waiting(triesLeft: triesLeft, wrongFrom: wrongFrom)
             }
         case .paired(let name): return .paired(name)
@@ -187,15 +187,15 @@ struct PairDeviceView: View {
                 Text(Self.askedLine(offer))
                     .font(.headline)
                     .fixedSize(horizontal: false, vertical: true)
-                Text("Point it at this code, or tap Enter Code Instead and type the code.")
+                Text("请用设备摄像头对准此二维码，或轻点“改为输入配对码”并输入下方数字。")
                     .fixedSize(horizontal: false, vertical: true)
             } else {
                 if let who = offer.requestedBy {
-                    Text("\(who) asked to pair.")
+                    Text("“\(who)”请求配对。")
                         .font(.headline)
                         .fixedSize(horizontal: false, vertical: true)
                 }
-                Text("In Sill on your iPhone or iPad, tap this Mac, or tap Add a Mac… when you’re away, then point it at this code.")
+                Text("请在 iPad 或 iPhone 上打开 Sill，轻点此 Mac（或在外网时轻点“添加 Mac…”），然后用摄像头扫描下方二维码。")
                     .fixedSize(horizontal: false, vertical: true)
             }
             QRCodeView(text: offer.url, spent: isSpent)
@@ -203,7 +203,7 @@ struct PairDeviceView: View {
                 .frame(maxWidth: .infinity)
             lower
             if !remoteAccess, !offer.byDevice {
-                Text("Remote Access is off. Paired devices can connect away from home once you turn it on.")
+                Text("远程访问当前处于关闭状态。开启后，已配对设备可在外网连接此 Mac。")
                     .foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
             }
@@ -228,7 +228,7 @@ struct PairDeviceView: View {
             VStack(alignment: .leading, spacing: 10) {
                 Grid(alignment: .leadingFirstTextBaseline, horizontalSpacing: 14, verticalSpacing: 6) {
                     GridRow {
-                        Text("Code").foregroundStyle(.secondary)
+                        Text("配对码").foregroundStyle(.secondary)
                         Text(offer.groupedCode)
                             .font(.system(size: 22, weight: .medium, design: .monospaced))
                             .textSelection(.enabled)
@@ -236,28 +236,28 @@ struct PairDeviceView: View {
                 }
                 countdown
                 if let wrongFrom {
-                    Label("A wrong code came from \(wrongFrom). \(triesLeft) tr\(triesLeft == 1 ? "y" : "ies") left.",
+                    Label("来自 \(wrongFrom) 的配对码输入有误，还剩 \(triesLeft) 次机会。",
                           systemImage: "exclamationmark.triangle.fill")
                         .foregroundStyle(.orange)
                 }
-                Text("A paired device can see and control this Mac.")
+                Text("配对成功后，该设备即可查看并控制此 Mac。")
                     .foregroundStyle(.secondary)
-                Text("Didn’t ask for this? Click Cancel.")
+                Text("如果不是你本人操作，请点击“取消”。")
                     .foregroundStyle(.secondary)
             }
         case .waiting(let triesLeft, let wrongFrom):
             VStack(alignment: .leading, spacing: 10) {
-                Text("Can’t scan? Tap Enter Code Instead, and type:")
+                Text("无法扫码？可在设备上轻点“改为输入配对码”，并填写：")
                 Grid(alignment: .leadingFirstTextBaseline, horizontalSpacing: 14, verticalSpacing: 6) {
                     GridRow {
-                        Text("Address").foregroundStyle(.secondary)
+                        Text("地址").foregroundStyle(.secondary)
                         let shown = address
                         VStack(alignment: .leading, spacing: 2) {
                             Text(shown.primary).textSelection(.enabled)
                             if let other = shown.secondary {
                                 // "or" is a text of its own, so selecting the address never takes it along.
                                 HStack(alignment: .firstTextBaseline, spacing: 4) {
-                                    Text("or")
+                                    Text("或")
                                     Text(other).textSelection(.enabled)
                                 }
                                 .foregroundStyle(.secondary)
@@ -266,7 +266,7 @@ struct PairDeviceView: View {
                         }
                     }
                     GridRow {
-                        Text("Code").foregroundStyle(.secondary)
+                        Text("配对码").foregroundStyle(.secondary)
                         Text(offer.groupedCode)
                             .font(.system(size: 22, weight: .medium, design: .monospaced))
                             .textSelection(.enabled)
@@ -274,21 +274,21 @@ struct PairDeviceView: View {
                 }
                 countdown
                 if let wrongFrom {
-                    Label("A wrong code came from \(wrongFrom). \(triesLeft) tr\(triesLeft == 1 ? "y" : "ies") left.",
+                    Label("来自 \(wrongFrom) 的配对码输入有误，还剩 \(triesLeft) 次机会。",
                           systemImage: "exclamationmark.triangle.fill")
                         .foregroundStyle(.orange)
                 }
-                Text("A paired device can see and control this Mac.")
+                Text("配对成功后，该设备即可查看并控制此 Mac。")
                     .foregroundStyle(.secondary)
             }
         case .paired(let name):
-            Label("Paired with \(name).", systemImage: "checkmark.circle.fill")
+            Label("已与“\(name)”完成配对。", systemImage: "checkmark.circle.fill")
         case .stopped:
-            Text("Pairing stopped after \(5) wrong codes.")
+            Text("配对码连续输错 \(5) 次，配对已中止。")
         case .expired:
-            Text("This code expired.")
+            Text("此配对码已过期。")
         case .closed:
-            Text("This code no longer works.")
+            Text("此配对码已失效。")
         case .doorDown(let text):
             Label(text, systemImage: "exclamationmark.triangle.fill")
                 .foregroundStyle(.orange)
@@ -310,12 +310,12 @@ struct PairDeviceView: View {
     /// A window a device opened: its first line, "iPad (iPad14,1) on this network asked to pair.",
     /// which VoiceOver also announces as it comes up (PairDeviceWindowController.show).
     static func askedLine(_ offer: RemoteAccess.PairingOffer) -> String {
-        "\(offer.requestedBy ?? "A device") \(offer.askedFrom ?? "on this network") asked to pair."
+        "\(offer.requestedBy ?? "有设备")（\(offer.askedFrom ?? "当前局域网")）请求配对。"
     }
 
     static func countdown(until end: Date, now: Date) -> String {
         let left = max(0, Int(end.timeIntervalSince(now).rounded(.up)))
-        return "Works once, for the next \(left / 60):\(String(format: "%02d", left % 60))."
+        return "单次有效，剩余时间 \(left / 60):\(String(format: "%02d", left % 60))。"
     }
 
     /// What to type on the device: Tailscale's name with its IPv4 under it, else a Tailscale IP,
@@ -332,24 +332,24 @@ struct PairDeviceView: View {
         HStack {
             Spacer()
             if !remoteAccess, !offer.byDevice {
-                Button("Turn On Remote Access", action: actions.turnOn)
+                Button("开启远程访问", action: actions.turnOn)
             }
             switch phase {
             case .waiting, .closed:
-                Button("Cancel", action: actions.close)
+                Button("取消", action: actions.close)
                     .keyboardShortcut(.cancelAction)
             case .paired:
-                Button("Done", action: actions.close)
+                Button("完成", action: actions.close)
                     .keyboardShortcut(.defaultAction)
             case .stopped, .expired:
-                Button("Cancel", action: actions.close)
+                Button("取消", action: actions.close)
                     .keyboardShortcut(.cancelAction)
-                Button("New Code", action: actions.newCode)
+                Button("生成新配对码", action: actions.newCode)
                     .keyboardShortcut(.defaultAction)
             case .doorDown:
-                Button("Cancel", action: actions.close)
+                Button("取消", action: actions.close)
                     .keyboardShortcut(.cancelAction)
-                Button("Change Port…", action: actions.changePort)
+                Button("修改端口…", action: actions.changePort)
             }
         }
     }
@@ -389,7 +389,7 @@ final class CableNoticeWindowController: NSWindowController, NSWindowDelegate {
         self.model = model
         let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 440, height: 160), styleMask: [.titled, .closable],
                               backing: .buffered, defer: true)
-        window.title = "Paired over the USB Cable"
+        window.title = "已通过 USB 数据线配对"
         window.isReleasedWhenClosed = false
         window.collectionBehavior.insert([.moveToActiveSpace, .fullScreenAuxiliary])
         super.init(window: window)
@@ -453,36 +453,36 @@ struct CableNoticeView: View {
 
     static let showsFor: Duration = .seconds(10)
 
-    static func firstLine(_ name: String) -> String { "\(name) is paired with this Mac." }
+    static func firstLine(_ name: String) -> String { "“\(name)”已与此 Mac 完成配对。" }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 14) {
             if removed {
-                Label("\(name) can no longer connect.", systemImage: "minus.circle.fill")
+                Label("“\(name)”已无法连接。", systemImage: "minus.circle.fill")
                     .font(.headline)
                     .fixedSize(horizontal: false, vertical: true)
-                Text("Plugged in, it pairs again by itself when it asks. Unplug it to keep it out.")
+                Text("如果仍插着数据线，设备请求连接时会自动重新配对。若要阻止连接，请拔下数据线。")
                     .fixedSize(horizontal: false, vertical: true)
             } else {
                 Label(Self.firstLine(name), systemImage: "checkmark.circle.fill")
                     .font(.headline)
                     .fixedSize(horizontal: false, vertical: true)
-                Text("It paired by itself over the USB cable, and can connect over Wi\u{2011}Fi and nearby from now on too.")
+                Text("已通过 USB 数据线自动完成配对，今后也可通过 Wi\u{2011}Fi 或无线直连连接。")
                     .fixedSize(horizontal: false, vertical: true)
                 if let removeProblem {
-                    Warning("\(name) is still paired: Sill couldn’t update the keychain (\(withoutFullStop(removeProblem))). Try again.")
+                    Warning("“\(name)”仍处于已配对状态：Sill 无法更新钥匙串（\(withoutFullStop(removeProblem))），请重试。")
                 }
             }
             HStack {
                 Spacer()
                 if !removed {
-                    Button("Remove") {
+                    Button("移除") {
                         // Said only once the keychain kept it, as in the Devices pane.
                         if let reason = actions.remove() { removeProblem = reason } else { removed = true; removeProblem = nil }
                         clicks += 1
                     }
                 }
-                Button("OK", action: actions.close)
+                Button("好", action: actions.close)
                     .keyboardShortcut(.defaultAction)
             }
         }
@@ -523,7 +523,7 @@ struct QRCodeView: View {
                     .frame(width: side, height: side, alignment: .topLeading)
                     .background(Color.white)
                     .accessibilityElement()
-                    .accessibilityLabel("Pairing code image")
+                    .accessibilityLabel("配对二维码图片")
                     .accessibilityAddTraits(.isImage)
             }
         }

@@ -71,6 +71,20 @@ final class AppModel {
     /// changing then (the older-device item's 10 minutes).
     @ObservationIgnored private var presentationExpiry: Task<Void, Never>?
     @ObservationIgnored private var presentationExpiryAt: Date?
+    @ObservationIgnored private var lastPermissionSignature: PermissionRefreshSignature?
+    @ObservationIgnored private var lastPermissionRefreshAt: Date = .distantPast
+
+    private struct PermissionRefreshSignature: Equatable {
+        let hasCoordinator: Bool
+        let startupError: String?
+        let network: HostStatusSnapshot.Network
+        let deviceCount: Int
+        let streamKind: HostStatusSnapshot.Stream.Kind?
+        let streamTitle: String?
+        let virtualDisplayProblem: String?
+        let lastStageFailure: String?
+        let audioProblem: String?
+    }
 
     init() {
         let settings = HostSettings()
@@ -202,7 +216,24 @@ final class AppModel {
             print("Remote access: the identity is in the data-protection keychain (access group \(group)).")
             return KeychainIdentityStore(accessGroup: group)
         case .legacy:
-            // No keychain-access-groups entitlement (a development build, or a release with no
+            // Local self-signed / ad-hoc builds have no Apple Team ID: macOS securityd binds every
+            // login.keychain-db item to the build's cdhash and prompts repeatedly across rebuilds.
+            // Persist in a private 0700 directory so identity & pairings survive updates with zero prompts.
+            if !Self.hasAppleTeamIdentifier() {
+                let dir = Self.localDevIdentityDirectory()
+                print("Remote access: local-dev build has no Apple Team ID; storing identity in \(dir.path) (no login keychain prompts).")
+                do {
+                    return try FileIdentityStore(
+                        directory: dir,
+                        summary: "in local dev storage (\(dir.path))",
+                        exposeTestDirectory: false
+                    )
+                } catch {
+                    print("Remote access: could not open local dev storage \(dir.path) (\(error)); using in-memory identity.")
+                    return MemoryIdentityStore()
+                }
+            }
+            // No keychain-access-groups entitlement (a development build signed by Apple Development, or a release with no
             // embedded provisioning profile): the login keychain, the profile-free fallback. Said in
             // the log so a build that should have hardened but did not is visible.
             print("Remote access: the identity is in the login keychain (no keychain-access-groups entitlement — a development build, or a release with no embedded provisioning profile; docs/keychain-plan.md).")
@@ -213,6 +244,29 @@ final class AppModel {
             do { return try FileIdentityStore(directory: URL(fileURLWithPath: path)) }
             catch { print("SILL_TEST_REMOTE_DIR=\(path) ignored: \(error)"); return MemoryIdentityStore() }
         }
+    }
+
+    private static func hasAppleTeamIdentifier() -> Bool {
+        var code: SecCode?
+        var onDisk: SecStaticCode?
+        var info: CFDictionary?
+        guard SecCodeCopySelf([], &code) == errSecSuccess, let code,
+              SecCodeCopyStaticCode(code, [], &onDisk) == errSecSuccess, let onDisk,
+              SecCodeCopySigningInformation(onDisk, SecCSFlags(rawValue: kSecCSSigningInformation), &info) == errSecSuccess,
+              let dict = info as? [String: Any],
+              let team = dict[kSecCodeInfoTeamIdentifier as String] as? String,
+              !team.isEmpty else {
+            return false
+        }
+        return true
+    }
+
+    private static func localDevIdentityDirectory() -> URL {
+        let appSupport = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first
+            ?? URL(fileURLWithPath: NSHomeDirectory()).appendingPathComponent("Library/Application Support", isDirectory: true)
+        return appSupport
+            .appendingPathComponent("Sill", isDirectory: true)
+            .appendingPathComponent("local-dev-identity", isDirectory: true)
     }
 
     /// The `keychain-access-groups` entitlement the running binary actually holds, from its own
@@ -334,11 +388,36 @@ final class AppModel {
             currentPresentation()
         } onChange: { [weak self] in
             Task { @MainActor in
-                self?.permissions.refresh()
+                self?.refreshPermissionsIfMeaningful()
                 self?.observePresentation()
             }
         }
         publish(next)
+    }
+
+    /// Avoids spamming TCC/AX IPC every 1 second when only device telemetry (fps, rtt, frameAge)
+    /// updates `status.snapshot`; still refreshes immediately on real state transitions (stream stop/start,
+    /// device connect/disconnect, errors) or after 30 s.
+    private func refreshPermissionsIfMeaningful() {
+        let s = coordinator?.status.snapshot ?? HostStatusSnapshot()
+        let sig = PermissionRefreshSignature(
+            hasCoordinator: coordinator != nil,
+            startupError: startupError,
+            network: s.network,
+            deviceCount: s.devices.count,
+            streamKind: s.stream?.kind,
+            streamTitle: s.stream?.title,
+            virtualDisplayProblem: s.virtualDisplayProblem,
+            lastStageFailure: s.lastStageFailure,
+            audioProblem: s.audio?.problem
+        )
+        let now = Date()
+        guard sig != lastPermissionSignature || now.timeIntervalSince(lastPermissionRefreshAt) >= 30 else {
+            return
+        }
+        lastPermissionSignature = sig
+        lastPermissionRefreshAt = now
+        permissions.refresh()
     }
 
     private func currentPresentation() -> StatusPresentation {

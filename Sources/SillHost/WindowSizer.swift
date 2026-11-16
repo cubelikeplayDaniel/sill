@@ -343,11 +343,41 @@ final class WindowSizer {
 
         let bounds = liveBounds(of: window.windowID) ?? window.frame
         let pool = titled.isEmpty ? candidates : titled
-        return pool.first { candidate in
+        if let exact = pool.first(where: { candidate in
             guard let f = frame(of: candidate) else { return false }
             return abs(f.minX - bounds.minX) <= frameTolerance && abs(f.minY - bounds.minY) <= frameTolerance
                 && abs(f.width - bounds.width) <= frameTolerance && abs(f.height - bounds.height) <= frameTolerance
+        }) {
+            return exact
         }
+
+        // Fallback 1: substring / case-insensitive title match (e.g. Finder window titles with path suffixes)
+        if !title.isEmpty {
+            let lower = title.lowercased()
+            let looseTitled = candidates.filter {
+                guard let t = string(of: $0, kAXTitleAttribute)?.lowercased(), !t.isEmpty else { return false }
+                return t == lower || t.contains(lower) || lower.contains(t)
+            }
+            if looseTitled.count == 1 { return looseTitled[0] }
+        }
+
+        // Fallback 2: wider frame tolerance (Stage Manager or recent animation)
+        let wideTolerance: CGFloat = 64
+        if let near = pool.first(where: { candidate in
+            guard let f = frame(of: candidate) else { return false }
+            return abs(f.minX - bounds.minX) <= wideTolerance && abs(f.minY - bounds.minY) <= wideTolerance
+                && abs(f.width - bounds.width) <= wideTolerance && abs(f.height - bounds.height) <= wideTolerance
+        }) {
+            return near
+        }
+
+        // Fallback 3: if the app has only one standard window with a valid non-empty frame, use it
+        let validWindows = candidates.filter {
+            guard let f = frame(of: $0) else { return false }
+            return f.width >= 80 && f.height >= 60
+        }
+        if validWindows.count == 1 { return validWindows[0] }
+        return nil
     }
 
     /// The window server's current bounds (CG global, top-left origin — the same space AX uses).

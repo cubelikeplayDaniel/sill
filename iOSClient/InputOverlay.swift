@@ -39,6 +39,43 @@ final class InputOverlayView: UIView, UITextInput, UIGestureRecognizerDelegate {
     /// Modifiers the portrait key row is holding down for the next keystroke. Empty in landscape
     /// unless the user latched one before rotating.
     var latchedModifiers: KeyModifiers = []
+    /// Persistent modifier locks from the accessory bar or virtual keyboard (e.g. ⌘锁定).
+    var lockedModifiers: KeyModifiers = []
+    /// Combined active modifiers (latched + locked).
+    var currentActiveModifiers: KeyModifiers { latchedModifiers.union(lockedModifiers) }
+    var currentLatchedModifiers: KeyModifiers { latchedModifiers }
+    var currentLockedModifiers: KeyModifiers { lockedModifiers }
+
+    /// Toggles a modifier between off -> latched -> locked -> off.
+    func toggleAccessoryModifier(_ flag: KeyModifiers) {
+        if lockedModifiers.contains(flag) {
+            lockedModifiers.remove(flag)
+        } else if latchedModifiers.contains(flag) {
+            latchedModifiers.remove(flag)
+            lockedModifiers.insert(flag)
+        } else {
+            latchedModifiers.insert(flag)
+        }
+        accessoryBar.updateModifierAppearance()
+    }
+
+    func consumeLatchedModifiers() {
+        consumeLatch()
+    }
+
+    /// Accessory bar attached directly above the native system keyboard.
+    private lazy var accessoryBar: KeyboardAccessoryBar = {
+        let bar = KeyboardAccessoryBar()
+        bar.inputOverlay = self
+        bar.sendKey = { [weak self] event in
+            self?.send(event)
+        }
+        bar.onDismiss = { [weak self] in
+            _ = self?.resignFirstResponder()
+        }
+        return bar
+    }()
+
     /// Fires once a latch has been spent, so the key row can un-highlight itself.
     var onModifiersConsumed: (() -> Void)?
 
@@ -128,6 +165,8 @@ final class InputOverlayView: UIView, UITextInput, UIGestureRecognizerDelegate {
     /// The finger pan opened the Mac's scroll (its stroke was the Mac's when it began): its steps and its
     /// end go out. A pan whose stroke the picture took sends nothing at all.
     private var fingerScroll = false
+    /// True while a long-press drag is active, routing finger movement to Mac left-mouse drag instead of scrolling.
+    private var isLongPressDragging = false
 
     override init(frame: CGRect) {
         super.init(frame: frame)
@@ -151,8 +190,17 @@ final class InputOverlayView: UIView, UITextInput, UIGestureRecognizerDelegate {
         tap.allowedTouchTypes = directOnly
         addGestureRecognizer(tap)
 
+        // Two-finger tap: secondary click (right-click) on the Mac.
+        let twoFingerTap = UITapGestureRecognizer(target: self, action: #selector(handleTwoFingerTap))
+        twoFingerTap.numberOfTouchesRequired = 2
+        twoFingerTap.numberOfTapsRequired = 1
+        twoFingerTap.allowedTouchTypes = directOnly
+        addGestureRecognizer(twoFingerTap)
+
+        // Long press: initiates left-click drag on Mac (windows, selection, sliders, canvas elements).
         let longPress = UILongPressGestureRecognizer(target: self, action: #selector(handleLongPress))
-        longPress.minimumPressDuration = 0.45
+        longPress.minimumPressDuration = 0.38
+        longPress.allowableMovement = 14
         longPress.allowedTouchTypes = directOnly
         addGestureRecognizer(longPress)
 
@@ -276,17 +324,53 @@ final class InputOverlayView: UIView, UITextInput, UIGestureRecognizerDelegate {
         sendPointer(.leftUp, at: point, clamped: false)
     }
 
-    /// Long press: the right button, since there is no second finger to spare for it. What is composed
-    /// goes, and what was typed is forgotten, only past the letterbox's guard, as for a tap.
+    /// Long press: initiates a left-button drag on the Mac.
+    /// On `.began`, left mouse down is sent along with haptic feedback.
+    /// As the finger moves (`.changed`), `move` events are sent with the button held down (generating `leftMouseDragged` on Mac).
+    /// On `.ended` or `.cancelled`, left mouse up is sent.
     @objc private func handleLongPress(_ gesture: UILongPressGestureRecognizer) {
+        guard !strokes.silent else {
+            if isLongPressDragging {
+                let point = gesture.location(in: self)
+                sendPointer(.leftUp, at: point, clamped: true)
+                isLongPressDragging = false
+            }
+            return
+        }
+        let point = gesture.location(in: self)
+        switch gesture.state {
+        case .began:
+            setOwnPointer(nil, .none)
+            guard sendPointer(.move, at: point, clamped: false) != nil else { return }
+            forgetTyped()
+            sendPointer(.leftDown, at: point, clamped: false)
+            isLongPressDragging = true
+            let generator = UIImpactFeedbackGenerator(style: .medium)
+            generator.impactOccurred()
+        case .changed:
+            guard isLongPressDragging else { return }
+            sendPointer(.move, at: point, clamped: true)
+        case .ended, .cancelled:
+            guard isLongPressDragging else { return }
+            sendPointer(.leftUp, at: point, clamped: true)
+            isLongPressDragging = false
+        default:
+            break
+        }
+    }
+
+    /// Two-finger tap: secondary click (right-click) on the Mac.
+    @objc private func handleTwoFingerTap(_ gesture: UITapGestureRecognizer) {
         guard !strokes.silent else { return }
-        guard gesture.state == .began else { return }
+        guard gesture.state == .ended else { return }
         setOwnPointer(nil, .none)
         let point = gesture.location(in: self)
         guard sendPointer(.move, at: point, clamped: false) != nil else { return }
         forgetTyped()
         sendPointer(.rightDown, at: point, clamped: false)
         sendPointer(.rightUp, at: point, clamped: false)
+        let generator = UIImpactFeedbackGenerator(style: .light)
+        generator.impactOccurred()
     }
 
     /// Finger pan: scrolling, not dragging, shaped like a Mac trackpad gesture so the Mac
@@ -299,7 +383,7 @@ final class InputOverlayView: UIView, UITextInput, UIGestureRecognizerDelegate {
     /// two on a zoomed picture, are the picture's (StreamZoom.Stroke), and their pan sends nothing,
     /// to its end, even after one of them lifts.
     @objc private func handlePan(_ gesture: UIPanGestureRecognizer) {
-        guard !strokes.silent else { return }
+        guard !strokes.silent && !isLongPressDragging else { return }
         if gesture.state == .began {
             zoomStroke.panBegan()
             fingerScroll = zoomStroke.scrollsMac
@@ -451,7 +535,10 @@ final class InputOverlayView: UIView, UITextInput, UIGestureRecognizerDelegate {
     /// another's gesture is open, so the Mac never gets two gestures' phases interleaved. Nothing else
     /// changes for the finger pan: no other scroll was ever open before these.
     override func gestureRecognizerShouldBegin(_ gestureRecognizer: UIGestureRecognizer) -> Bool {
-        if gestureRecognizer === scrollPan || gestureRecognizer === trackpadScroll || gestureRecognizer === wheelScroll {
+        if gestureRecognizer === scrollPan {
+            return !scrollGestureOpen && !isLongPressDragging
+        }
+        if gestureRecognizer === trackpadScroll || gestureRecognizer === wheelScroll {
             return !scrollGestureOpen
         }
         return super.gestureRecognizerShouldBegin(gestureRecognizer)
@@ -639,33 +726,54 @@ final class InputOverlayView: UIView, UITextInput, UIGestureRecognizerDelegate {
     /// position is kept (drawn only with Q2's flip), the iPad's own pointer keeps none, as iPadOS
     /// draws it. Only a Pencil reports a height or a tilt (a trackpad or mouse pointer reads 0 for
     /// both), which is how the two are told apart here.
+    private var pencilTouching = false
+    private var lastPencilAt: CFTimeInterval = 0
+    private var smoothedPencilPos: (x: Double, y: Double)?
+    private var lastPencilPressure: Double = 0
+    private var pencilFilter = PenFilter()
+    private var hoverFilter = PenFilter(minCutoff: 1.8, beta: 18.0)
+
     @objc private func handleHover(_ gesture: UIHoverGestureRecognizer) {
+        guard !pencilTouching else { return }
         switch gesture.state {
         case .began, .changed:
+            let wasHoveringPencil = hoverIsPencil
             if gesture.state == .began { hoverIsPencil = false }
             if gesture.zOffset > 0 || gesture.altitudeAngle > 0 { hoverIsPencil = true }
             let loc = gesture.location(in: self)
-            if hoverIsPencil, let sendPen, let p = normalized(loc, clamped: true) {
+            if hoverIsPencil, let sendPen {
+                guard CACurrentMediaTime() - lastPencilAt > 0.035 else { return }
+                guard let raw = normalized(loc, clamped: true) else { return }
+                if gesture.state == .began || !wasHoveringPencil { hoverFilter.reset() }
+                let p = hoverFilter.apply(rawX: raw.x, rawY: raw.y)
+                smoothedPencilPos = p
                 let sample = PenSample(phase: PenPhase.hover,
                                        x: p.x,
                                        y: p.y,
                                        pressure: 0,
                                        altitude: Double(gesture.altitudeAngle),
-                                       azimuth: Double(gesture.azimuthAngle(in: self)))
+                                       azimuth: Double(gesture.azimuthAngle(in: self)),
+                                       t: CACurrentMediaTime())
                 sendPen(PenBatch(target: PenTarget.source, samples: [sample]))
                 setOwnPointer(CGPoint(x: p.x, y: p.y), .pencil)
                 return
+            }
+            if !hoverIsPencil {
+                hoverFilter.reset()
+                smoothedPencilPos = nil
             }
             let at = sendPointer(.move, at: loc, clamped: true)
             if hoverIsPencil { setOwnPointer(at, .pencil) } else { setOwnPointer(nil, .none) }
         default:
             if hoverIsPencil, let sendPen {
                 let loc = gesture.location(in: self)
-                let p = normalized(loc, clamped: true) ?? (x: 0.5, y: 0.5)
+                let p = normalized(loc, clamped: true) ?? smoothedPencilPos ?? (x: 0.5, y: 0.5)
                 sendPen(PenBatch(target: PenTarget.source,
-                                 samples: [PenSample(phase: PenPhase.leave, x: p.x, y: p.y)]))
+                                 samples: [PenSample(phase: PenPhase.leave, x: p.x, y: p.y, t: CACurrentMediaTime())]))
                 setOwnPointer(nil, .none)
             }
+            hoverFilter.reset()
+            smoothedPencilPos = nil
             hoverIsPencil = false
         }
     }
@@ -682,22 +790,32 @@ final class InputOverlayView: UIView, UITextInput, UIGestureRecognizerDelegate {
         touches.first { $0.type == .pencil || $0.type == .indirectPointer }
     }
 
-    private func penSample(phase: Int, for touch: UITouch, clamped: Bool) -> PenSample? {
-        let point = touch.location(in: self)
-        guard let p = normalized(point, clamped: clamped) else { return nil }
-        let maxForce = touch.maximumPossibleForce
+    private func penSample(phase: Int, for touch: UITouch, clamped: Bool, resetFilter: Bool = false) -> PenSample? {
+        let point = touch.preciseLocation(in: self)
+        guard let raw = normalized(point, clamped: clamped) else { return nil }
+        if resetFilter { pencilFilter.reset() }
+        let p = pencilFilter.apply(rawX: raw.x, rawY: raw.y, timestamp: touch.timestamp)
+        smoothedPencilPos = p
         let pressure: Double
         if phase == PenPhase.down || phase == PenPhase.drag {
-            pressure = maxForce > 0 ? min(max(Double(touch.force / maxForce), 0), 1) : 0.5
+            let prev = phase == PenPhase.down ? 0 : lastPencilPressure
+            let isEstimated = touch.estimatedPropertiesExpectingUpdates.contains(.force)
+            pressure = Pen.mapPressure(force: Double(touch.force),
+                                       maxForce: Double(touch.maximumPossibleForce),
+                                       previous: prev,
+                                       isEstimated: isEstimated)
+            lastPencilPressure = pressure
         } else {
             pressure = 0
+            lastPencilPressure = 0
         }
         return PenSample(phase: phase,
                          x: p.x,
                          y: p.y,
                          pressure: pressure,
                          altitude: Double(touch.altitudeAngle),
-                         azimuth: Double(touch.azimuthAngle(in: self)))
+                         azimuth: Double(touch.azimuthAngle(in: self)),
+                         t: touch.timestamp)
     }
 
     /// This device's own pointer after a pointer touch at `at`: the Pencil's position, from
@@ -720,11 +838,14 @@ final class InputOverlayView: UIView, UITextInput, UIGestureRecognizerDelegate {
             var samples: [PenSample] = []
             for (idx, t) in coalesced.enumerated() {
                 let phase = idx == 0 ? PenPhase.down : PenPhase.drag
-                if let s = penSample(phase: phase, for: t, clamped: idx > 0) {
+                if let s = penSample(phase: phase, for: t, clamped: idx > 0, resetFilter: idx == 0) {
                     samples.append(s)
                 }
             }
             guard let last = samples.last else { return }
+            pencilTouching = true
+            lastPencilAt = CACurrentMediaTime()
+            lastPencilPressure = last.pressure
             forgetTyped()
             sendPen(PenBatch(target: PenTarget.source, samples: samples))
             setOwnPointer(CGPoint(x: last.x, y: last.y), .pencil)
@@ -747,6 +868,8 @@ final class InputOverlayView: UIView, UITextInput, UIGestureRecognizerDelegate {
             let coalesced = event?.coalescedTouches(for: touch) ?? [touch]
             let samples = coalesced.compactMap { penSample(phase: PenPhase.drag, for: $0, clamped: true) }
             guard let last = samples.last else { return }
+            pencilTouching = true
+            lastPencilAt = CACurrentMediaTime()
             sendPen(PenBatch(target: PenTarget.source, samples: samples))
             setOwnPointer(CGPoint(x: last.x, y: last.y), .pencil)
             return
@@ -760,11 +883,19 @@ final class InputOverlayView: UIView, UITextInput, UIGestureRecognizerDelegate {
             super.touchesEnded(touches, with: event); return
         }
         if touch.type == .pencil, let sendPen {
+            pencilTouching = false
+            lastPencilAt = CACurrentMediaTime()
+            lastPencilPressure = 0
             let coalesced = event?.coalescedTouches(for: touch) ?? []
             var samples = coalesced.dropLast().compactMap { penSample(phase: PenPhase.drag, for: $0, clamped: true) }
             if let up = penSample(phase: PenPhase.up, for: touch, clamped: true) {
                 samples.append(up)
+            } else {
+                let p = normalized(touch.preciseLocation(in: self), clamped: true) ?? smoothedPencilPos ?? (x: 0.5, y: 0.5)
+                samples.append(PenSample(phase: PenPhase.up, x: p.x, y: p.y, t: touch.timestamp))
             }
+            pencilFilter.reset()
+            smoothedPencilPos = nil
             if let last = samples.last {
                 sendPen(PenBatch(target: PenTarget.source, samples: samples))
                 setOwnPointer(CGPoint(x: last.x, y: last.y), .pencil)
@@ -780,9 +911,14 @@ final class InputOverlayView: UIView, UITextInput, UIGestureRecognizerDelegate {
             super.touchesCancelled(touches, with: event); return
         }
         if touch.type == .pencil, let sendPen {
-            let p = normalized(touch.location(in: self), clamped: true) ?? (x: 0.5, y: 0.5)
+            pencilTouching = false
+            lastPencilAt = CACurrentMediaTime()
+            lastPencilPressure = 0
+            let p = normalized(touch.preciseLocation(in: self), clamped: true) ?? smoothedPencilPos ?? (x: 0.5, y: 0.5)
+            pencilFilter.reset()
+            smoothedPencilPos = nil
             sendPen(PenBatch(target: PenTarget.source,
-                             samples: [PenSample(phase: PenPhase.leave, x: p.x, y: p.y)]))
+                             samples: [PenSample(phase: PenPhase.leave, x: p.x, y: p.y, t: touch.timestamp)]))
             setOwnPointer(nil, .none)
             return
         }
@@ -843,7 +979,7 @@ final class InputOverlayView: UIView, UITextInput, UIGestureRecognizerDelegate {
         Self.textinput("insertText \(text.debugDescription)" + (composition.isComposing ? " over the composition" : "")
                        + (composition.retype.isEmpty ? "" : ", after a deletion that left \(composition.retype.debugDescription) before the fence"))
         setOwnPointer(nil, .none)
-        if !composition.isComposing, !latchedModifiers.isDisjoint(with: .shortcutMakers), text.count == 1,
+        if !composition.isComposing, !currentActiveModifiers.isDisjoint(with: .shortcutMakers), text.count == 1,
            let character = text.first, let usage = HIDKey.usage(for: character) {
             sendLatched(usage)
             return
@@ -853,7 +989,7 @@ final class InputOverlayView: UIView, UITextInput, UIGestureRecognizerDelegate {
         // keyboard sends them with shift held (ForwardedKeys.shiftedKeyUsages), since "\n" and "\t"
         // as text carry no shift. Not while an input method composes: what it hands over then
         // replaces its composition, and its Return is its own.
-        if !composition.isComposing, latchedModifiers.contains(.shift), text == "\n" || text == "\t",
+        if !composition.isComposing, currentActiveModifiers.contains(.shift), text == "\n" || text == "\t",
            let character = text.first, let usage = HIDKey.usage(for: character),
            ForwardedKeys.shiftedKeyUsages.contains(usage) {
             sendLatched(usage)
@@ -866,7 +1002,7 @@ final class InputOverlayView: UIView, UITextInput, UIGestureRecognizerDelegate {
     func deleteBackward() {
         Self.textinput("deleteBackward" + (composition.isComposing ? " in the composition" : ""))
         setOwnPointer(nil, .none)
-        if !composition.isComposing, !latchedModifiers.isDisjoint(with: .shortcutMakers) {
+        if !composition.isComposing, !currentActiveModifiers.isDisjoint(with: .shortcutMakers) {
             sendLatched(HIDKey.deleteBackward)
             return
         }
@@ -880,7 +1016,7 @@ final class InputOverlayView: UIView, UITextInput, UIGestureRecognizerDelegate {
     /// One key, down and up, carrying the latched modifier bits, then the latch is spent.
     private func sendLatched(_ usage: UInt16) {
         forgetTyped()
-        KeyChord.press(usage, with: latchedModifiers).forEach(send)
+        KeyChord.press(usage, with: currentActiveModifiers).forEach(send)
         consumeLatch()
     }
 
@@ -956,6 +1092,7 @@ final class InputOverlayView: UIView, UITextInput, UIGestureRecognizerDelegate {
         guard !latchedModifiers.isEmpty else { return }
         latchedModifiers = []
         onModifiersConsumed?()
+        accessoryBar.updateModifierAppearance()
     }
 
     // MARK: Who holds the keyboard (InputOverlayProxy, HardwareKeyboardPolicy)
@@ -1010,6 +1147,9 @@ final class InputOverlayView: UIView, UITextInput, UIGestureRecognizerDelegate {
     /// shows no software keyboard, even for a keyboard it counts as gone a moment before GameController
     /// does) and no assistant groups; the system keyboard and its groups for the person's own.
     override var inputView: UIView? { holdsForHardwareKeyboard ? emptyInputView : nil }
+
+    /// Accessory bar attached directly above the native system keyboard with modifier buttons and dismiss key.
+    override var inputAccessoryView: UIView? { holdsForHardwareKeyboard ? nil : accessoryBar }
 
     private func applyInputViews(automatic: Bool) {
         holdsForHardwareKeyboard = automatic
@@ -1231,7 +1371,7 @@ final class InputOverlayView: UIView, UITextInput, UIGestureRecognizerDelegate {
     private var keyTyping: KeyTyping {
         KeyTyping.of(inputMode: textInputMode?.primaryLanguage,
                      keyboards: UITextInputMode.activeInputModes.compactMap(\.primaryLanguage),
-                     composing: composition.isComposing, latched: !latchedModifiers.isEmpty, macRepeats: macRepeatsKeys())
+                     composing: composition.isComposing, latched: !currentActiveModifiers.isEmpty, macRepeats: macRepeatsKeys())
     }
 
     #if DEBUG

@@ -26,7 +26,7 @@ import StreamProtocol
 
 /// The modifier bits an `InputEvent.key` carries: `UIKeyModifierFlags` raw values, which sit at the
 /// same bit positions as the `CGEventFlags` the host posts with, so they travel unchanged.
-struct KeyModifiers: OptionSet {
+struct KeyModifiers: OptionSet, Hashable {
     let rawValue: UInt64
 
     static let shift   = KeyModifiers(rawValue: 1 << 17)

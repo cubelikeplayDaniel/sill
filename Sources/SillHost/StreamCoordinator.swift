@@ -174,8 +174,9 @@ package final class StreamCoordinator {
             if case .window(let id) = active { catalog.activeWindowID = id } else { catalog.activeWindowID = nil }
             if active == .none { status.update { $0.stream = nil } }
             server.setStreaming(active != .none)   // link keepalive ticks while a source is live
-            // The Mac's cursor shape, never while it is locked (LockPolicy: another user's, or the lock screen's).
-            cursorShapes.running = active != .none && LockPolicy.allowed(lockReading).pointer
+            // The Mac's cursor shape and text-input focus watcher, active whenever a client is connected
+            // (including Pad Mode where active == .none) and the Mac is not locked.
+            cursorShapes.running = (active != .none || catalog.clientCount > 0) && LockPolicy.allowed(lockReading).pointer
             pointer.setGeometry(pointerGeometry(), fps: fps)   // also on a restart of the same source
             menuTargetChanged()                     // the menus' app follows the source (only for devices that asked)
             audioFollow()                           // and the sound (the same app keeps its stream)
@@ -601,6 +602,7 @@ package final class StreamCoordinator {
                 // SessionLock looks once a second while someone watches, and at once as the first comes.
                 SessionLock.shared.devices(count)
                 self.catalog.clientCount = count          // the catalog idles itself at 0
+                self.cursorShapes.running = (self.active != .none || count > 0) && LockPolicy.allowed(self.lockReading).pointer
                 // Nobody is watching: stop capturing and encoding. The next client picks afresh.
                 if count == 0 { self.viewport = nil; self.clientFPS = [:]; self.fitScales = [:] }   // the next device starts from scratch
                 if count == 0 { self.gestureChords.forget() }                 // and did not open a view it could close
@@ -620,6 +622,10 @@ package final class StreamCoordinator {
         cursorShapes.onChange = { [weak self] blob in
             self?.server.broadcast(StreamMessage(kind: .cursorShape, timestamp: Date().timeIntervalSince1970,
                                                  isKeyframe: false, payload: blob))
+        }
+        cursorShapes.onTextInputFocusChanged = { [weak self] in
+            guard let self, self.catalog.clientCount > 0, !self.lockReading.locked else { return }
+            self.broadcastList()
         }
         catalog.onInstalledAppsReady = { [weak self] apps in
             guard let self else { return }
@@ -1208,6 +1214,22 @@ package final class StreamCoordinator {
             if !synthetic { raiseIfInteracting(event) }
             deliver(event, in: rect, from: device)
             desktopInputMayActivate(event)
+            switch event {
+            case .text:
+                cursorShapes.noteDeviceTyping()
+                cursorShapes.checkTextInputFocusAfterInteraction()
+            case .pointer(let action, _, _) where action == .leftUp || action == .rightUp:
+                cursorShapes.checkTextInputFocusAfterInteraction()
+            case .key(let usage, let down, _):
+                if usage == 0x2A || (usage >= 0x04 && usage <= 0x38 && usage != 0x28 && usage != 0x29) {
+                    cursorShapes.noteDeviceTyping()
+                }
+                if !down {
+                    cursorShapes.checkTextInputFocusAfterInteraction()
+                }
+            default:
+                break
+            }
         case .pen:
             guard let penBatch, let samples = Pen.accepted(penBatch), !samples.isEmpty else { return }
             let device = ObjectIdentifier(connection)
@@ -1229,7 +1251,10 @@ package final class StreamCoordinator {
                 gestureChords.input(Self.gestureInput(firstDown))
                 if !synthetic { raiseIfInteracting(firstDown) }
             }
-            injector.pen.apply(samples, in: rect, from: device)
+            injector.pen.apply(samples, in: rect, from: device, showOverlay: penBatch.target == PenTarget.display)
+            if samples.contains(where: { $0.phase == PenPhase.up }) {
+                cursorShapes.checkTextInputFocusAfterInteraction()
+            }
         case .gesture:
             // A three- or four-finger gesture (docs/trackpad-gestures-plan.md §7.4), which the Mac
             // turns into its own shortcut. At most `gesturesPerSecond` a second per connection: a
@@ -1301,7 +1326,13 @@ package final class StreamCoordinator {
             if switching { viewportArrivedWhileSwitching = true; return }   // select's defer applies both
             // The streamed window went back to its own size: the stream restarts at it now, as after a
             // fit (`applyViewportToActiveWindow`), not at the catalog's next look up to 2 s later.
-            if restored { await catalog.refreshWindows() }
+            if restored {
+                try? await Task.sleep(for: .milliseconds(45))
+                await catalog.refreshWindows()
+                if Self.isWindow(active), !switching {
+                    await select(active)
+                }
+            }
             await applyViewportToActiveWindow()
             if flipWaited { await applyPending() }
         case .pairingWanted:
@@ -1452,7 +1483,7 @@ package final class StreamCoordinator {
         let allowed = LockPolicy.allowed(now)
         catalog.locked = !allowed.windows
         clipboard.setLocked(!allowed.clipboard)
-        cursorShapes.running = active != .none && allowed.pointer
+        cursorShapes.running = (active != .none || catalog.clientCount > 0) && allowed.pointer
         pointer.setGeometry(pointerGeometry(), fps: fps)     // nothing of the pointer read while locked
         if now.locked {
             pendingLaunch = nil              // a launch asked for before the lock picks nothing now
@@ -1627,7 +1658,7 @@ package final class StreamCoordinator {
             // The catalog only refreshes every 2 s, so ask the window server for live bounds —
             // but cache them briefly, or a 120 Hz Pencil drag hits it on every single event.
             let now = CFAbsoluteTimeGetCurrent()
-            if let cached = rectCache, cached.id == id, now - cached.at < 0.1 { return cached.rect }
+            if (!injector.isDragging || injector.pen.isPenDown), let cached = rectCache, cached.id == id, now - cached.at < 0.1 { return cached.rect }
             guard let rect = Self.liveBounds(of: id) ?? catalog.window(id: id)?.frame else { return nil }
             rectCache = (id, rect, now)
             return rect
@@ -1683,9 +1714,22 @@ package final class StreamCoordinator {
     /// (`restoreFits`, issue #57). None once the host is shutting down: nothing would put it back.
     private func fitToViewport(_ window: SCWindow) -> CGSize? {
         guard !shuttingDown, let v = viewport, let textScale = v.scale, textScale > 0, v.width > 0, v.height > 0 else { return nil }
-        let target = CGSize(width: (v.width / textScale).rounded(), height: (v.height / textScale).rounded())
-        let current = Self.liveBounds(of: window.windowID)?.size ?? window.frame.size
-        if abs(current.width - target.width) <= 2, abs(current.height - target.height) <= 2 { return nil }
+        let currentBounds = Self.liveBounds(of: window.windowID) ?? window.frame
+        let current = currentBounds.size
+        var rawW = v.width / textScale
+        var rawH = v.height / textScale
+        // Keep the requested window size within the display's visible area (aspect-fitted) so that
+        // zooming out (e.g. 0.75× or 0.5×) never exceeds the screen bounds or gets rejected by AX.
+        let maxArea = WindowSizer.visibleArea(around: currentBounds)?.size
+            ?? CGDisplayBounds(CGMainDisplayID()).size
+        if maxArea.width > 200, maxArea.height > 200, (rawW > maxArea.width || rawH > maxArea.height) {
+            let s = min(maxArea.width / max(rawW, 1), maxArea.height / max(rawH, 1))
+            rawW *= s
+            rawH *= s
+        }
+        let target = CGSize(width: max(240, CGFloat((Int(rawW.rounded()) + 4) & ~7)),
+                            height: max(180, CGFloat((Int(rawH.rounded()) + 1) & ~1)))
+        if abs(current.width - target.width) <= 4, abs(current.height - target.height) <= 4 { return nil }
         guard let fit = sizer.resize(window: window, to: target) else { return nil }
         fits.fitted(window.windowID, handle: fit.placement, before: fit.before, after: fit.after, asked: target)
         let actual = fit.after.size
@@ -1735,7 +1779,13 @@ package final class StreamCoordinator {
         }
         // A locked Mac sizes no window (LockPolicy): the one streaming at the lock gives way to the placeholder.
         guard case .window(let id) = active, !lockReading.locked, let w = catalog.window(id: id) else { return }
-        if fitToViewport(w) != nil { await catalog.refreshWindows() }
+        if fitToViewport(w) != nil {
+            try? await Task.sleep(for: .milliseconds(45))
+            await catalog.refreshWindows()
+            if case .window(let now) = active, now == id, !switching {
+                await select(active)
+            }
+        }
     }
 
     /// `--virtual-display`: how big the window should be on the virtual display and how big the
@@ -2010,21 +2060,31 @@ package final class StreamCoordinator {
             if sourceRect == nil {
                 // Locked while the stage tried (its awaits): nothing raised or sized either.
                 if lockReading.locked { lockedMidSwitch(source); return }
-                // Today's path: capture the window where it is, at most at its display's own scale
-                // (a window on a 1x display drawn at 1x into a 2x buffer filled its top-left quarter).
-                let windowFilter = SCContentFilter(desktopIndependentWindow: w)
-                filter = windowFilter
-                displayScale = Self.displayScale(of: windowFilter)
                 // Regular mode raises the picked window (2026-09-23, Noah: the Mac must show the
                 // picked window). A covered window stops repainting, so it would stream frozen, and
                 // keys go to the active app's key window. Done before capture starts, so the first
                 // frames already show it uncovered. The virtual display's fallback lands here too.
                 if comeForward, !shuttingDown { activateAndRaise(window: w) }
-                // Fit the window to the client's panel before capture starts, so the stream comes up
-                // at the new size instead of restarting once the catalog notices. `w` is a snapshot
-                // with the old frame; the window server has the new one.
-                if let resized = fitToViewport(w) { size = Self.liveBounds(of: id)?.size ?? resized }
-                describe = "\(w.owningApplication?.applicationName ?? "?") — \(w.title ?? "")\(useSoftwareEncoder ? " (software encoder)" : "")"
+                // Fit the window to the client's panel BEFORE building SCContentFilter so the filter's
+                // contentRect reflects the resized window (preventing cropped/torn frames when shrinking text).
+                var targetWindow = w
+                if let resized = fitToViewport(w) {
+                    try? await Task.sleep(for: .milliseconds(45))
+                    await catalog.refreshWindows()
+                    guard !shuttingDown else { active = .none; broadcastList(); return }
+                    if lockReading.locked { lockedMidSwitch(source); return }
+                    if let refreshed = catalog.window(id: id) {
+                        targetWindow = refreshed
+                        picked = refreshed
+                    }
+                    size = Self.liveBounds(of: id)?.size ?? resized
+                } else {
+                    size = Self.liveBounds(of: id)?.size ?? targetWindow.frame.size
+                }
+                let windowFilter = SCContentFilter(desktopIndependentWindow: targetWindow)
+                filter = windowFilter
+                displayScale = Self.displayScale(of: windowFilter)
+                describe = "\(targetWindow.owningApplication?.applicationName ?? "?") — \(targetWindow.title ?? "")\(useSoftwareEncoder ? " (software encoder)" : "")"
             }
             if sourceRect == nil {
                 // The window as it is, drawn 1:1 at its display's scale: an odd side rounds up, one black
@@ -2116,6 +2176,7 @@ package final class StreamCoordinator {
             }
         }
         broadcastList()
+        cursorShapes.checkTextInputFocusAfterInteraction()
         // Mid-switch requests (a viewport, the last client leaving) are applied by the defer.
     }
 
@@ -2326,6 +2387,7 @@ package final class StreamCoordinator {
             }
         }
         releaseKeysOfDevicesThatLeft()
+        cursorShapes.checkTextInputFocusAfterInteraction()
     }
 
     /// A device the Mac no longer serves (`revoked`), or one that left while input was held
@@ -3367,6 +3429,20 @@ package final class StreamCoordinator {
         // A locked Mac's list: no windows, no clipboard, `locked`, and off console `offConsole`
         // (LockPolicy); unlocked, as it is, byte for byte. Which went last, for `lockChanged`.
         let reading = lockReading
+        if !reading.locked {
+            list.textInputFocused = cursorShapes.isTextInputFocused
+            if cursorShapes.isTextInputFocused {
+                list.textInputFocusID = cursorShapes.textInputFocusID
+                list.textInputValue = cursorShapes.textInputValue
+                list.textInputIsSelection = cursorShapes.textInputIsSelection ? true : nil
+                list.textInputRevision = cursorShapes.textInputRevision
+                if let elemFrame = cursorShapes.textInputFrame,
+                   let src = currentSourceRect(), src.height > 1 {
+                    let normY = (elemFrame.midY - src.minY) / src.height
+                    list.textInputAnchorY = min(1.0, max(0.0, Double(normY)))
+                }
+            }
+        }
         lockedListSent = reading.locked
         return StreamMessage(kind: .windowList, timestamp: Date().timeIntervalSince1970, isKeyframe: false,
                              payload: Wire.encode(LockPolicy.list(list, reading: reading)))

@@ -149,8 +149,11 @@ cp "$icon_out"/compiled/* "$stage/Contents/Resources/" 2>/dev/null || true
 # warning below, not end the script under `set -e`.)
 identity="${SILL_SIGN_IDENTITY:-$(security find-identity -v -p codesigning 2>/dev/null | awk '/"Apple Development: / { print $2; exit }' || true)}"
 if [ -z "$identity" ]; then
+    identity="$(security find-identity -p codesigning ~/Library/Keychains/login.keychain-db 2>/dev/null | awk '/"Sill Local Dev"/ { print $2; exit }' || true)"
+fi
+if [ -z "$identity" ]; then
     identity="-"
-    echo "warning: no Apple Development identity in the keychain; signing ad hoc. Screen Recording and" >&2
+    echo "warning: no signing identity in the keychain; signing ad hoc. Screen Recording and" >&2
     echo "         Accessibility will have to be granted again after every rebuild." >&2
 fi
 if [ "$release" = 1 ]; then

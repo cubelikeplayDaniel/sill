@@ -171,6 +171,13 @@ struct PortraitStreamScreen: View {
     /// The picture's pinch zoom (StreamScreen's; StreamZoom): not watched here, only by the picture's
     /// own view, so a pinch redraws nothing else.
     let zoom: StreamZoomModel
+    var scribbleShown: Binding<Bool> = .constant(false)
+    var autoActivateScribble: Binding<Bool> = .constant(true)
+    var scribbleHasDraft: Binding<Bool> = .constant(false)
+    var scribbleTextFocused: Binding<Bool> = .constant(false)
+    var scribbleDockEdge: Binding<ScribbleDockEdge> = .constant(.bottom)
+    var dismissScribble: () -> Void = {}
+    @State private var portraitPaneSize: CGSize = .zero
 
     private var streamShape: RoundedRectangle { RoundedRectangle(cornerRadius: 12, style: .continuous) }
     /// The Duo's fold across this screen (StreamScreen, iOS 27.1): where the halves split.
@@ -407,8 +414,8 @@ struct PortraitStreamScreen: View {
                              offered: client.textScaleOffersOff, available: client.textScaleSelectable)
                 .tourTarget(.textSize)
 
-            barButton(open: keyboardShown, symbol: "keyboard", label: "Keyboard", width: width,
-                      accessibilityLabel: keyboardShown ? "Hide the keyboard" : "Show the keyboard",
+            barButton(open: keyboardShown, symbol: "keyboard", label: "键盘", width: width,
+                      accessibilityLabel: keyboardShown ? "隐藏键盘" : "显示键盘",
                       action: {
                           setSettings(false, false)
                           overlay.toggleKeyboard()
@@ -478,9 +485,34 @@ struct PortraitStreamScreen: View {
         // A locked Mac: its cover over the picture (LockedMac), under the link's line.
         .overlay { LockedMacShade(client: client) }
         .overlay(alignment: .top) { LinkLineView(text: linkLine) }
+        .overlay(alignment: scribbleDockEdge.wrappedValue.alignment) {
+            if scribbleShown.wrappedValue {
+                ScribbleBar(
+                    isShown: scribbleShown,
+                    autoActivate: autoActivateScribble,
+                    hasDraft: scribbleHasDraft,
+                    isTextFocused: scribbleTextFocused,
+                    dockEdge: scribbleDockEdge,
+                    macFocused: client.textInputFocused,
+                    macFocusID: client.textInputFocusID,
+                    macSyncedText: client.textInputValue,
+                    macTextIsSelection: client.textInputIsSelection,
+                    macTextRevision: client.textInputRevision,
+                    panelSize: portraitPaneSize,
+                    onDismiss: dismissScribble,
+                    sendInput: { client.sendInput($0) }
+                )
+                .transition(.move(edge: scribbleDockEdge.wrappedValue.transitionEdge).combined(with: .opacity))
+            }
+        }
+        .coordinateSpace(name: "scribbleHost")
+        .animation(.spring(response: 0.30, dampingFraction: 0.84), value: scribbleDockEdge.wrappedValue)
         .clipShape(streamShape)
         .overlay(streamShape.strokeBorder(Color.white.opacity(0.09), lineWidth: 1))
-        .onGeometryChange(for: CGSize.self, of: { $0.size }, action: { if measured { onPanelSize($0) } })
+        .onGeometryChange(for: CGSize.self, of: { $0.size }, action: {
+            portraitPaneSize = $0
+            if measured { onPanelSize($0) }
+        })
         .tourTarget(.stream)
     }
 
@@ -538,8 +570,8 @@ struct PortraitStreamScreen: View {
     }
 
     private func appsButton(width: CGFloat? = nil) -> some View {
-        barButton(open: drawerOpen, symbol: "magnifyingglass", label: "Apps", width: width,
-                  accessibilityLabel: drawerOpen ? "Close the app list" : "Open the app list",
+        barButton(open: drawerOpen, symbol: "magnifyingglass", label: "应用", width: width,
+                  accessibilityLabel: drawerOpen ? "关闭应用列表" : "打开应用列表",
                   action: {
                       setSettings(false, false)
                       withAnimation(.easeOut(duration: 0.18)) { drawerOpen.toggle() }
@@ -547,15 +579,23 @@ struct PortraitStreamScreen: View {
     }
 
     private func desktopButton(width: CGFloat? = nil) -> some View {
-        barButton(open: client.active == .desktop, symbol: "desktopcomputer", label: "Desktop", width: width,
-                  accessibilityLabel: "Show the full Mac desktop",
-                  action: { client.select(.desktop) })
+        let isDesktop = client.active == .desktop && !client.padMode
+        return barButton(open: isDesktop,
+                         symbol: isDesktop ? "desktopcomputer" : "arrow.uturn.backward.square",
+                         label: isDesktop ? "桌面" : "返回桌面",
+                         width: width,
+                         accessibilityLabel: "显示完整 Mac 桌面",
+                         action: {
+                             textScale = nil
+                             client.setPadMode(false)
+                             client.select(.desktop)
+                         })
     }
 
     /// Leave's old slot: Disconnect is the Settings panel's pinned last row now.
     private func settingsButton(width: CGFloat? = nil) -> some View {
-        barButton(open: settingsOpen, symbol: "gearshape", label: "Settings", width: width,
-                  accessibilityLabel: settingsOpen ? "Close settings" : "Settings for \(client.macName.isEmpty ? "the Mac" : client.macName)",
+        barButton(open: settingsOpen, symbol: "gearshape", label: "设置", width: width,
+                  accessibilityLabel: settingsOpen ? "关闭设置" : "\(client.macName.isEmpty ? "Mac" : client.macName) 的设置",
                   action: { setSettings(!settingsOpen, true) })
             .tourTarget(.settings)
     }

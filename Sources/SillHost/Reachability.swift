@@ -138,10 +138,22 @@ final class Reachability: @unchecked Sendable {
             if !n.isEmpty { snap.setupVPNs.append(n) }
         }
         snap.setupVPNs.sort()
-        // Point-to-point interfaces that are up and carry an IPv4 (tunnels outside the services).
+        // Point-to-point interfaces that are up and carry an IPv4 (tunnels outside the services),
+        // plus active LAN interfaces (e.g. bridge100 Internet Sharing or Ethernet) not listed as a service.
         var tunnels: [String: [String]] = [:]
-        for e in InterfaceSnapshot.read() where e.pointToPoint && e.up && e.address.count == 4 {
-            tunnels[e.name, default: []].append(IPBytes.text(e.address))
+        var extraLANs: [String: [String]] = [:]
+        let serviceInterfaces = Set(snap.services.map(\.interface))
+        for e in InterfaceSnapshot.read() where e.up && e.address.count == 4 {
+            let text = IPBytes.text(e.address)
+            if e.pointToPoint {
+                tunnels[e.name, default: []].append(text)
+            } else if AddressList.isLAN(e.name), !serviceInterfaces.contains(e.name),
+                      AddressList.routableV4(text, onTunnel: false) {
+                extraLANs[e.name, default: []].append(text)
+            }
+        }
+        for (ifname, ipv4s) in extraLANs.sorted(by: { $0.key < $1.key }) {
+            snap.services.append(AddressList.Service(id: "if-\(ifname)", name: ifname, interface: ifname, ipv4: ipv4s, ipv6: []))
         }
         snap.tunnels = tunnels.map { AddressList.Tunnel(interface: $0.key, ipv4: $0.value) }.sorted { $0.interface < $1.interface }
         // MagicDNS: kept only when the guess resolves to the tunnel's own address.

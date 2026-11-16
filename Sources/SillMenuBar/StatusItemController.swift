@@ -84,10 +84,10 @@ enum MenuBuilder {
         }
         menu.append(.separator)
 
-        menu.append(MenuEntry(kind: .item, title: "Virtual Display", subtitle: p.virtualDisplayNote,
+        menu.append(MenuEntry(kind: .item, title: "虚拟显示器", subtitle: p.virtualDisplayNote,
                               checked: config.virtualDisplay, action: .setVirtualDisplay(!config.virtualDisplay)))
-        menu.append(MenuEntry(kind: .item, title: "Frame Rate", children: [60, 120].map { fps in
-            MenuEntry(kind: .item, title: "Up to \(fps) fps", checked: config.maxFPS == fps, action: .setMaxFPS(fps))
+        menu.append(MenuEntry(kind: .item, title: "帧率", children: [60, 120].map { fps in
+            MenuEntry(kind: .item, title: "最高 \(fps) fps", checked: config.maxFPS == fps, action: .setMaxFPS(fps))
         }))
         var quality = QualityPreset.allCases.map { preset in
             MenuEntry(kind: .item, title: preset.title, checked: config.bitrate == preset.rawValue, action: .setBitrate(preset.rawValue))
@@ -98,58 +98,58 @@ enum MenuBuilder {
         // The home quality, as ever; while every connected device is away, the subtitle says which
         // quality runs instead (the away one is set in Settings › Streaming, never here).
         let qualityNote = p.away
-            ? "Away from home now: \(QualityPreset.shortTitle(bitrate: config.awayBitrate, captureScale: Double(config.awayCaptureScale)))"
-            : "Per 60 fps; a 120 fps stream gets twice as much"
-        menu.append(MenuEntry(kind: .item, title: "Quality", subtitle: qualityNote, children: quality))
+            ? "当前为远程网络：\(QualityPreset.shortTitle(bitrate: config.awayBitrate, captureScale: Double(config.awayCaptureScale)))"
+            : "按 60 fps 计算；120 fps 串流带宽翻倍"
+        menu.append(MenuEntry(kind: .item, title: "画质", subtitle: qualityNote, children: quality))
         // Standard is one pixel a point: a quarter of a Retina display's pixels, and on a 1x display
         // the same capture as Retina (CaptureScale holds the knob to the display's own scale).
-        menu.append(MenuEntry(kind: .item, title: "Resolution", children: [
-            MenuEntry(kind: .item, title: "Retina", checked: config.captureScale >= 1.5, action: .setCaptureScale(2)),
-            MenuEntry(kind: .item, title: "Standard", subtitle: "On a Retina display, a quarter of the pixels to encode",
+        menu.append(MenuEntry(kind: .item, title: "分辨率", children: [
+            MenuEntry(kind: .item, title: "视网膜 (Retina)", checked: config.captureScale >= 1.5, action: .setCaptureScale(2)),
+            MenuEntry(kind: .item, title: "标准", subtitle: "在视网膜显示器上仅需编码四分之一的像素",
                       checked: config.captureScale < 1.5, action: .setCaptureScale(1)),
         ]))
         // The last of what streams: the sound of it (docs/audio-plan.md §6), a beta, which its title
         // says (in the title, so menu.txt and VoiceOver have it too). Absolute, like Virtual Display:
         // it sets the value it showed.
-        menu.append(MenuEntry(kind: .item, title: "Send Audio (Beta)", subtitle: "The Mac keeps playing it too",
+        menu.append(MenuEntry(kind: .item, title: "发送音频（测试版）", subtitle: "Mac 本机也会同时播放声音",
                               checked: config.sendAudio, action: .setSendAudio(!config.sendAudio)))
         menu.append(.separator)
 
         // How Sill runs on this Mac, not the picture: devices reach it over peer-to-peer Wi-Fi too.
         // Here as well as in Settings because it is situational (on in a café, off at home).
-        menu.append(MenuEntry(kind: .item, title: "Direct Wireless Connection",
-                              subtitle: "No shared network needed; Wi\u{2011}Fi streams can stutter",
+        menu.append(MenuEntry(kind: .item, title: "无线直连",
+                              subtitle: "无需处于同一局域网；开启时 Wi\u{2011}Fi 串流可能偶尔卡顿",
                               checked: config.directWireless, action: .setDirectWireless(!config.directWireless)))
         // Opens the pane rather than toggling: turning it on is worth reading what it does, and the
         // internet switch stays one deliberate step deeper, never in the menu.
         if let note = p.remoteAccessNote {
-            menu.append(MenuEntry(kind: .item, title: "Remote Access…", subtitle: note, action: .showSettingsTab(.remoteAccess)))
+            menu.append(MenuEntry(kind: .item, title: "远程访问…", subtitle: note, action: .showSettingsTab(.remoteAccess)))
         }
         var loginNote: String?
-        if !login.available { loginNote = "Available when Sill runs from its app bundle" }
+        if !login.available { loginNote = "仅当从应用程序包运行 Sill 时可用" }
         else if let error = login.error { loginNote = error }
-        else if login.needsApproval { loginNote = "Approve Sill in System Settings › Login Items" }
-        menu.append(MenuEntry(kind: .item, title: "Launch at Login", subtitle: loginNote, checked: login.on,
+        else if login.needsApproval { loginNote = "请在“系统设置 › 登录项”中批准 Sill" }
+        menu.append(MenuEntry(kind: .item, title: "开机自动启动", subtitle: loginNote, checked: login.on,
                               enabled: login.available, action: .toggleLaunchAtLogin))
-        menu.append(MenuEntry(kind: .item, title: "Permissions", children: [
+        menu.append(MenuEntry(kind: .item, title: "权限", children: [
             permissions.screenRecording
-                ? MenuEntry(kind: .item, title: "Screen Recording: Allowed", enabled: false)
-                : MenuEntry(kind: .item, title: "Screen Recording: Not Allowed…", action: .allowScreenRecording),
+                ? MenuEntry(kind: .item, title: "录屏与系统录音：已授权", enabled: false)
+                : MenuEntry(kind: .item, title: "录屏与系统录音：未授权…", action: .allowScreenRecording),
             permissions.accessibility
-                ? MenuEntry(kind: .item, title: "Accessibility: Allowed", enabled: false)
-                : MenuEntry(kind: .item, title: "Accessibility: Not Allowed…", action: .allowAccessibility),
+                ? MenuEntry(kind: .item, title: "辅助功能：已授权", enabled: false)
+                : MenuEntry(kind: .item, title: "辅助功能：未授权…", action: .allowAccessibility),
             .separator,
-            MenuEntry(kind: .item, title: "Open Privacy & Security…", action: .openPrivacy),
+            MenuEntry(kind: .item, title: "打开“隐私与安全性”…", action: .openPrivacy),
         ]))
         menu.append(.separator)
 
         if p.remoteAccessNote != nil {
-            menu.append(MenuEntry(kind: .item, title: "Pair iPhone or iPad…", enabled: p.canPair, action: .showPairing))
+            menu.append(MenuEntry(kind: .item, title: "配对 iPhone 或 iPad…", enabled: p.canPair, action: .showPairing))
         }
-        menu.append(MenuEntry(kind: .item, title: "Show Log…", action: .showLog))
-        menu.append(MenuEntry(kind: .item, title: "Settings…", key: ",", action: .showSettings))
+        menu.append(MenuEntry(kind: .item, title: "查看日志…", action: .showLog))
+        menu.append(MenuEntry(kind: .item, title: "设置…", key: ",", action: .showSettings))
         menu.append(.separator)
-        menu.append(MenuEntry(kind: .item, title: "Quit Sill", key: "q", action: .quit))
+        menu.append(MenuEntry(kind: .item, title: "退出 Sill", key: "q", action: .quit))
         return menu
     }
 

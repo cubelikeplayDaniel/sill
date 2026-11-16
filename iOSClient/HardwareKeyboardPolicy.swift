@@ -19,10 +19,11 @@ import Foundation
 struct HardwareKeyboardPolicy: Equatable {
     /// What can be open over the stream that takes the keyboard for itself, or must keep keys from the
     /// Mac: the Settings panel, the pairing overlay (Pair This iPad…, an outside link), the first-run
-    /// tour, the Apps drawer (its search field), the Menus pull-down. The Add a Mac card is the connect
-    /// screen's, where no input view is on screen.
+    /// tour, the Apps drawer (its search field), the Menus pull-down, and the floating Scribble input
+    /// bar while its text view is actively focused. The Add a Mac card is the connect screen's, where
+    /// no input view is on screen.
     enum Taker: String, CaseIterable, Hashable {
-        case settings, pairing, tour, drawer, menus
+        case settings, pairing, tour, drawer, menus, scribble
     }
 
     /// Who holds the keyboard now: nobody, this rule for the hardware keyboard, or the person.

@@ -3,6 +3,8 @@
 xcuserdata/
 *.xcuserstate
 DerivedData/
+.build-ios/
+*.ipa
 .DS_Store
 
 # Signing and notary keys, certificates exported with their keys, provisioning profiles and

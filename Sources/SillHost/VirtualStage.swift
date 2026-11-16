@@ -123,10 +123,19 @@ final class VirtualStage {
 
     /// The window's rectangle in display-local points, trimmed to even output pixels.
     private(set) var captureRect: CGRect = .zero
-    /// Height of the menu bar macOS draws on the virtual display. A guess until measured from
-    /// NSScreen after the first display comes up, then cached for the process.
-    private var menuInset: CGFloat = 24
+    /// Height of the menu bar macOS draws on the virtual display. Seeded from the primary screen's
+    /// menu bar height (default 30 pt on modern macOS) and verified once from NSScreen after the first
+    /// display comes up, avoiding an unnecessary destroy-and-recreate cycle on first staging.
+    private var menuInset: CGFloat = VirtualStage.initialMenuInset()
     private var insetMeasured = false
+
+    private static func initialMenuInset() -> CGFloat {
+        if let first = NSScreen.screens.first {
+            let h = first.frame.maxY - first.visibleFrame.maxY
+            if h >= 20 && h <= 60 { return h }
+        }
+        return 30
+    }
     /// Set when staging must not be attempted again this run (API missing, repeated failures).
     var disabledReason: String?
     private var creationFailures = 0
@@ -614,6 +623,9 @@ final class VirtualStage {
                   let b = info[kCGWindowBounds as String] as? NSDictionary,
                   let rect = CGRect(dictionaryRepresentation: b as CFDictionary),
                   rect.width >= 100, rect.height >= 100, rect.intersects(bounds) else { continue }
+            let overlap = rect.intersection(bounds)
+            guard !overlap.isNull, overlap.width >= 20, overlap.height >= 20,
+                  Self.fraction(of: rect, inside: bounds) >= 0.05 else { continue }
             let name = (info[kCGWindowName as String] as? String) ?? ""
             if name.lowercased().contains("layerprobe") { continue }
             let owner = (info[kCGWindowOwnerName as String] as? String) ?? "?"

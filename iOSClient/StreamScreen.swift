@@ -105,6 +105,16 @@ struct StreamScreen: View {
     @State private var drawerOpen = false
     @State private var keyboardShown = false
     @State private var scribbleShown = false
+    /// Automatic Pencil Scribble activation when Mac focuses an editable text field.
+    @AppStorage("Sill.autoActivateScribble") private var autoActivateScribble = true
+    @State private var scribbleAutoOpened = false
+    @State private var dismissedFocusID: UInt64? = nil
+    @State private var scribbleManualDockEdge: ScribbleDockEdge? = nil
+    @State private var scribbleHasDraft = false
+    @State private var scribbleTextFocused = false
+    /// Whether the software built-in virtual keyboard is expanded at the bottom of the screen.
+    @State private var builtinKeyboardShown = false
+    @StateObject private var builtinModifierState = VirtualKeyboardModifierState()
     /// Modifiers held down by the portrait key row until the next key, character or click uses
     /// them. Lives up here so rotating the iPad does not drop a half-typed shortcut.
     @State private var latched: KeyModifiers = []
@@ -424,6 +434,23 @@ struct StreamScreen: View {
         .onChange(of: textScale) { _, _ in client.noteAction() }
         .onChange(of: tourCard, initial: true) { _, card in tourCardChanged(card) }
         .onChange(of: tourVoiceOver) { _, _ in carryTour(reason: "VoiceOver") }
+        .modifier(ScribbleFocusSyncModifier(
+            client: client,
+            keyboardShown: keyboardShown,
+            drawerOpen: drawerOpen,
+            settingsOpen: settingsOpen,
+            syncFocus: syncScribbleWithMacFocus,
+            closeAutoScribble: {
+                if scribbleAutoOpened {
+                    scribbleShown = false
+                    scribbleAutoOpened = false
+                }
+            },
+            closeAnyScribble: {
+                scribbleAutoOpened = false
+                scribbleShown = false
+            }
+        ))
         // The session is over: a decision still waiting out its beat must not land in the next
         // session's `client.tourSession`.
         .onDisappear {
@@ -748,6 +775,7 @@ struct StreamScreen: View {
         if tour != nil { takers.insert(.tour) }
         if drawerOpen { takers.insert(.drawer) }
         if menusOpen { takers.insert(.menus) }
+        if scribbleShown { takers.insert(.scribble) }
         return takers
     }
 
@@ -788,6 +816,65 @@ struct StreamScreen: View {
     /// The Desktop, which Aa never resizes, and nothing streaming keep the standard arrangement.
     private var largerPictureNow: Bool {
         PhonePortraitLayout.largerPicture(switchOn: largerPicture, streaming: .init(client.active))
+    }
+
+    private var scribbleDockEdge: ScribbleDockEdge {
+        if let manual = scribbleManualDockEdge { return manual }
+        if let anchorY = client.textInputAnchorY { return anchorY >= 0.52 ? .top : .bottom }
+        return .bottom
+    }
+
+    private var scribbleDockBinding: Binding<ScribbleDockEdge> {
+        Binding(
+            get: { scribbleDockEdge },
+            set: { scribbleManualDockEdge = $0 }
+        )
+    }
+
+    private func syncScribbleWithMacFocus(focusIDChanged: Bool) {
+        if client.textInputFocused {
+            if focusIDChanged {
+                scribbleManualDockEdge = nil
+            }
+            guard autoActivateScribble,
+                  !client.padMode, !drawerOpen, !settingsOpen, !overlayShown, tour == nil else { return }
+            if !scribbleShown && client.textInputFocusID != dismissedFocusID {
+                if keyboardShown { overlay.setKeyboard(shown: false) }
+                scribbleAutoOpened = true
+                withAnimation(.easeOut(duration: 0.18)) { scribbleShown = true }
+            }
+        } else {
+            dismissedFocusID = nil
+            // Only auto-dismiss if user hasn't focused the text box and there's no pending draft
+            if scribbleAutoOpened && !scribbleHasDraft && !scribbleTextFocused {
+                scribbleAutoOpened = false
+                withAnimation(.easeOut(duration: 0.16)) { scribbleShown = false }
+            }
+        }
+    }
+
+    private func toggleScribbleManually() {
+        setSettings(false, restoreKeyboard: false)
+        withAnimation(.easeOut(duration: 0.16)) {
+            if scribbleShown {
+                dismissedFocusID = client.textInputFocused ? client.textInputFocusID : nil
+                scribbleAutoOpened = false
+                scribbleTextFocused = false
+                scribbleShown = false
+            } else {
+                dismissedFocusID = nil
+                scribbleAutoOpened = false
+                if keyboardShown { overlay.setKeyboard(shown: false) }
+                scribbleShown = true
+            }
+        }
+    }
+
+    private func dismissScribble() {
+        dismissedFocusID = client.textInputFocused ? client.textInputFocusID : nil
+        scribbleAutoOpened = false
+        scribbleTextFocused = false
+        withAnimation(.easeOut(duration: 0.16)) { scribbleShown = false }
     }
 
     /// Opens or closes the Settings panel. Opening puts the drawer, the traffic lights and the Aa
@@ -1174,33 +1261,77 @@ struct StreamScreen: View {
                    keyboardShown: $keyboardShown, scribbleShown: $scribbleShown,
                    textScale: $textScale, scaleOpen: $scaleOpen, windowMenu: $windowMenu,
                    settingsOpen: settingsOpen,
-                   // Apps, Menus, Aa, Keyboard, Desktop, Settings, and the strip. The Mac's sound has no
-                   // button: Send Audio and Mute are the Settings panel's switches (Noah, 2026-10-27).
-                   menusFit: MacMenuButton.fits(width: width - 2 * bar.padding, buttons: 6, buttonWidth: bar.buttonWidth,
+                   // Apps, Menus, Aa, Keyboard, Scribble, Desktop, Pad, Settings, and the strip.
+                   menusFit: MacMenuButton.fits(width: width - 2 * bar.padding, buttons: 8, buttonWidth: bar.buttonWidth,
                                                 gap: bar.gap, thumbWidth: bar.thumbWidth),
                    toggleKeyboard: { overlay.toggleKeyboard() },
+                   toggleScribble: toggleScribbleManually,
                    setSettings: { setSettings($0, restoreKeyboard: $1) },
                    menusOpened: menusOpened, menusClosed: menusClosed)
             contentArea(bar: bar)
+
+            if builtinKeyboardShown {
+                BuiltinVirtualKeyboardView(
+                    modifierState: builtinModifierState,
+                    send: { client.sendFromKeyRow($0) },
+                    onClose: { withAnimation(.easeOut(duration: 0.18)) { builtinKeyboardShown = false } }
+                )
+                .padding(.horizontal, 6)
+                .padding(.bottom, 2)
+                .transition(.move(edge: .bottom).combined(with: .opacity))
+            }
+
+            BottomShortcutBar(
+                isNativeKeyboardShown: $keyboardShown,
+                isBuiltinKeyboardShown: $builtinKeyboardShown,
+                sendInput: { client.sendFromKeyRow($0) },
+                toggleNativeKeyboard: { overlay.toggleKeyboard() }
+            )
         }
     }
 
     /// `largerKeyboard`: Larger Picture's keyboard on a phone (see `body`), nil otherwise.
     private func portrait(metrics: PortraitMetrics, largerKeyboard: CGFloat? = nil) -> some View {
-        PortraitStreamScreen(client: client, metrics: metrics, drawerOpen: $drawerOpen,
-                             keyboardShown: $keyboardShown,
-                             textScale: $textScale, scaleOpen: $scaleOpen, windowMenu: $windowMenu,
-                             latched: $latched, overlay: overlay,
-                             settingsOpen: settingsOpen,
-                             setSettings: { setSettings($0, restoreKeyboard: $1) },
-                             menusOpened: menusOpened, menusClosed: menusClosed,
-                             settingsTransition: { settingsTransition(anchor: $0) },
-                             onPanelSize: { panelSize = $0 },
-                             pairThisDevice: openPairingOverlay,
-                             linkLine: shownLinkLine,
-                             takeTour: takeTour,
-                             largerKeyboard: largerKeyboard,
-                             zoom: zoom)
+        VStack(spacing: 0) {
+            PortraitStreamScreen(client: client, metrics: metrics, drawerOpen: $drawerOpen,
+                                 keyboardShown: $keyboardShown,
+                                 textScale: $textScale, scaleOpen: $scaleOpen, windowMenu: $windowMenu,
+                                 latched: $latched, overlay: overlay,
+                                 settingsOpen: settingsOpen,
+                                 setSettings: { setSettings($0, restoreKeyboard: $1) },
+                                 menusOpened: menusOpened, menusClosed: menusClosed,
+                                 settingsTransition: { settingsTransition(anchor: $0) },
+                                 onPanelSize: { panelSize = $0 },
+                                 pairThisDevice: openPairingOverlay,
+                                 linkLine: shownLinkLine,
+                                 takeTour: takeTour,
+                                 largerKeyboard: largerKeyboard,
+                                 zoom: zoom,
+                                 scribbleShown: $scribbleShown,
+                                 autoActivateScribble: $autoActivateScribble,
+                                 scribbleHasDraft: $scribbleHasDraft,
+                                 scribbleTextFocused: $scribbleTextFocused,
+                                 scribbleDockEdge: scribbleDockBinding,
+                                 dismissScribble: dismissScribble)
+
+            if builtinKeyboardShown {
+                BuiltinVirtualKeyboardView(
+                    modifierState: builtinModifierState,
+                    send: { client.sendFromKeyRow($0) },
+                    onClose: { withAnimation(.easeOut(duration: 0.18)) { builtinKeyboardShown = false } }
+                )
+                .padding(.horizontal, 6)
+                .padding(.bottom, 2)
+                .transition(.move(edge: .bottom).combined(with: .opacity))
+            }
+
+            BottomShortcutBar(
+                isNativeKeyboardShown: $keyboardShown,
+                isBuiltinKeyboardShown: $builtinKeyboardShown,
+                sendInput: { client.sendFromKeyRow($0) },
+                toggleNativeKeyboard: { overlay.toggleKeyboard() }
+            )
+        }
     }
 
     private var streamShape: RoundedRectangle { RoundedRectangle(cornerRadius: 12, style: .continuous) }
@@ -1235,12 +1366,28 @@ struct StreamScreen: View {
             // A locked Mac: its cover over the picture (LockedMac), under the link's line.
             .overlay { LockedMacShade(client: client) }
             .overlay(alignment: .top) { LinkLineView(text: shownLinkLine) }
-            .overlay(alignment: .bottom) {
+            .overlay(alignment: scribbleDockEdge.alignment) {
                 if scribbleShown {
-                    ScribbleBar(isShown: $scribbleShown, sendInput: { client.sendInput($0) })
-                        .transition(.move(edge: .bottom).combined(with: .opacity))
+                    ScribbleBar(
+                        isShown: $scribbleShown,
+                        autoActivate: $autoActivateScribble,
+                        hasDraft: $scribbleHasDraft,
+                        isTextFocused: $scribbleTextFocused,
+                        dockEdge: scribbleDockBinding,
+                        macFocused: client.textInputFocused,
+                        macFocusID: client.textInputFocusID,
+                        macSyncedText: client.textInputValue,
+                        macTextIsSelection: client.textInputIsSelection,
+                        macTextRevision: client.textInputRevision,
+                        panelSize: panelSize,
+                        onDismiss: dismissScribble,
+                        sendInput: { client.sendInput($0) }
+                    )
+                    .transition(.move(edge: scribbleDockEdge.transitionEdge).combined(with: .opacity))
                 }
             }
+            .coordinateSpace(name: "scribbleHost")
+            .animation(.spring(response: 0.30, dampingFraction: 0.84), value: scribbleDockEdge)
             .clipShape(streamShape)
             .overlay(streamShape.strokeBorder(Color.white.opacity(0.09), lineWidth: 1))
             // The panel itself, inside the padding: the size the host fits the Mac window to.
@@ -1287,6 +1434,26 @@ struct StreamScreen: View {
             }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
+    }
+}
+
+private struct ScribbleFocusSyncModifier: ViewModifier {
+    @ObservedObject var client: StreamClient
+    let keyboardShown: Bool
+    let drawerOpen: Bool
+    let settingsOpen: Bool
+    let syncFocus: (Bool) -> Void
+    let closeAutoScribble: () -> Void
+    let closeAnyScribble: () -> Void
+
+    func body(content: Content) -> some View {
+        content
+            .onChange(of: client.textInputFocused) { _, _ in syncFocus(false) }
+            .onChange(of: client.textInputFocusID) { _, _ in syncFocus(true) }
+            .onChange(of: client.padMode) { _, on in if on { closeAutoScribble() } else if client.textInputFocused && !keyboardShown { syncFocus(false) } }
+            .onChange(of: keyboardShown) { _, up in if up { closeAnyScribble() } else if client.textInputFocused { syncFocus(false) } }
+            .onChange(of: drawerOpen) { _, open in if open { closeAutoScribble() } else if client.textInputFocused && !keyboardShown { syncFocus(false) } }
+            .onChange(of: settingsOpen) { _, open in if open { closeAutoScribble() } else if client.textInputFocused && !keyboardShown { syncFocus(false) } }
     }
 }
 
@@ -1438,6 +1605,7 @@ private struct TopBar: View {
     /// Whether the bar holds the Menus button and still a whole thumbnail (`MacMenuButton.fits`).
     let menusFit: Bool
     let toggleKeyboard: () -> Void
+    let toggleScribble: () -> Void
     /// Opens or closes the Settings panel; the second argument says whether closing puts the
     /// keyboard back (see `StreamScreen.setSettings`).
     let setSettings: (_ open: Bool, _ restoreKeyboard: Bool) -> Void
@@ -1447,8 +1615,8 @@ private struct TopBar: View {
 
     var body: some View {
         HStack(spacing: metrics.gap) {
-            button(open: drawerOpen, symbol: "magnifyingglass", label: "Apps",
-                   accessibilityLabel: drawerOpen ? "Close the app list" : "Open the app list",
+            button(open: drawerOpen, symbol: "magnifyingglass", label: "应用",
+                   accessibilityLabel: drawerOpen ? "关闭应用列表" : "打开应用列表",
                    action: {
                        setSettings(false, false)
                        withAnimation(.easeOut(duration: 0.18)) { drawerOpen.toggle() }
@@ -1484,34 +1652,40 @@ private struct TopBar: View {
                              offered: client.textScaleOffersOff, available: client.textScaleSelectable)
                 .tourTarget(.textSize)
 
-            button(open: keyboardShown, symbol: "keyboard", label: "Keyboard",
-                   accessibilityLabel: keyboardShown ? "Hide the keyboard" : "Show the keyboard",
+            button(open: keyboardShown, symbol: "keyboard", label: "键盘",
+                   accessibilityLabel: keyboardShown ? "隐藏键盘" : "显示键盘",
                    action: { setSettings(false, false); toggleKeyboard() })
                 .opacity(scaleOpen ? 0 : 1)
                 .allowsHitTesting(!scaleOpen)
                 .tourTarget(.keyboard)
 
-            button(open: scribbleShown, symbol: "pencil.and.scribble", label: "Scribble",
-                   accessibilityLabel: scribbleShown ? "Hide handwriting input bar" : "Show handwriting input bar",
-                   action: { withAnimation(.easeOut(duration: 0.16)) { scribbleShown.toggle() } })
+            button(open: scribbleShown, symbol: "pencil.and.scribble", label: "手写",
+                   accessibilityLabel: scribbleShown ? "隐藏手写输入栏" : "显示手写输入栏",
+                   action: toggleScribble)
                 .opacity(scaleOpen ? 0 : 1)
                 .allowsHitTesting(!scaleOpen)
 
-            button(open: client.active == .desktop && !client.padMode, symbol: "desktopcomputer", label: "Desktop",
-                   accessibilityLabel: "Show the full Mac desktop",
-                   action: { client.setPadMode(false); client.select(.desktop) })
+            button(open: client.active == .desktop && !client.padMode,
+                   symbol: (client.active == .desktop && !client.padMode) ? "desktopcomputer" : "arrow.uturn.backward.square",
+                   label: (client.active == .desktop && !client.padMode) ? "桌面" : "返回桌面",
+                   accessibilityLabel: "显示完整 Mac 桌面",
+                   action: {
+                       textScale = nil
+                       client.setPadMode(false)
+                       client.select(.desktop)
+                   })
                 .opacity(scaleOpen ? 0 : 1)
                 .allowsHitTesting(!scaleOpen)
 
-            button(open: client.padMode, symbol: "rectangle.and.pencil.and.ellipsis", label: "Pad",
-                   accessibilityLabel: client.padMode ? "Switch to screen mirroring" : "Switch to screenless drawing pad",
+            button(open: client.padMode, symbol: "rectangle.and.pencil.and.ellipsis", label: "数位板",
+                   accessibilityLabel: client.padMode ? "切换回屏幕镜像" : "切换至无画面数位板模式",
                    action: { client.setPadMode(!client.padMode) })
                 .opacity(scaleOpen ? 0 : 1)
                 .allowsHitTesting(!scaleOpen)
 
             // Leave's old slot: Disconnect is the Settings panel's pinned last row now.
-            button(open: settingsOpen, symbol: "gearshape", label: "Settings",
-                   accessibilityLabel: settingsOpen ? "Close settings" : "Settings for \(client.macName.isEmpty ? "the Mac" : client.macName)",
+            button(open: settingsOpen, symbol: "gearshape", label: "设置",
+                   accessibilityLabel: settingsOpen ? "关闭设置" : "\(client.macName.isEmpty ? "Mac" : client.macName) 的设置",
                    action: { setSettings(!settingsOpen, true) })
                 .opacity(scaleOpen ? 0 : 1)
                 .allowsHitTesting(!scaleOpen)
@@ -1845,11 +2019,18 @@ struct WindowStrip: View {
                     WindowThumbnail(window: window,
                                     image: client.thumbnails[window.id],
                                     icon: client.icons[window.bundleID],
-                                    isActive: client.active == .window(window.id),
+                                    isActive: client.active == .window(window.id) && !client.padMode,
                                     width: width, height: height, radius: radius, badge: badge,
                                     menuOpen: menuFor == window.id,
                                     lifted: lifted == window.id,
-                                    onSelect: { client.select(.window(window.id)) },
+                                    onSelect: {
+                                        if client.active == .window(window.id) && !client.padMode {
+                                            client.select(.desktop)
+                                        } else {
+                                            client.setPadMode(false)
+                                            client.select(.window(window.id))
+                                        }
+                                    },
                                     onCommand: { client.command($0, window: window.id) },
                                     onMove: { step in
                                         client.moveWindow(window.id, to: index + step)
@@ -1857,7 +2038,16 @@ struct WindowStrip: View {
                                     })
                         .overlay {
                             HoldDragOverlay(minimumHold: hold,
-                                            onTap: { if menuFor != nil { closeMenu() } else { client.select(.window(window.id)) } },
+                                            onTap: {
+                                                if menuFor != nil {
+                                                    closeMenu()
+                                                } else if client.active == .window(window.id) && !client.padMode {
+                                                    client.select(.desktop)
+                                                } else {
+                                                    client.setPadMode(false)
+                                                    client.select(.window(window.id))
+                                                }
+                                            },
                                             onHold: { openMenu(for: window.id) },
                                             onMove: { t in holdMoved(window: window, index: index, count: windows.count, slot: slot, translation: t) },
                                             onEnd: { holdEnded(window: window) })
@@ -2031,9 +2221,9 @@ struct WindowLightsMenu: View {
             ZStack {
                 Color.clear.contentShape(Rectangle()).onTapGesture(perform: dismiss)
                 HStack(spacing: 6) {
-                    light(.close, Color(hex: 0xFF5F57), "xmark", "Close")
-                    light(.minimize, Color(hex: 0xFEBC2E), "minus", "Minimize")
-                    light(.fullScreen, Color(hex: 0x28C840), "arrow.up.left.and.arrow.down.right", "Full Screen")
+                    light(.close, Color(hex: 0xFF5F57), "xmark", "关闭")
+                    light(.minimize, Color(hex: 0xFEBC2E), "minus", "最小化")
+                    light(.fullScreen, Color(hex: 0x28C840), "arrow.up.left.and.arrow.down.right", "全屏")
                 }
                 .padding(.horizontal, 10)
                 .frame(width: w, height: h)
@@ -2211,12 +2401,12 @@ struct AppDrawer: View {
                 ScrollView {
                     VStack(spacing: 6) {
                         if !openApps.isEmpty {
-                            header("Open now")
+                            header("正在运行")
                             ForEach(openApps) { app in
                                 DrawerRow(height: 50,
                                           highlighted: app.bundleID == activeBundleID,
                                           title: app.name,
-                                          trailing: app.windows.count == 1 ? "1 window" : "\(app.windows.count) windows",
+                                          trailing: "\(app.windows.count) 个窗口",
                                           action: { show(app) }) {
                                     AppIcon(image: client.icons[app.bundleID], name: app.name,
                                             size: 32, radius: 9, fontSize: 12)
@@ -2224,7 +2414,7 @@ struct AppDrawer: View {
                             }
                         }
                         if !closedApps.isEmpty {
-                            header("All apps").padding(.top, 2)
+                            header("所有应用").padding(.top, 2)
                             ForEach(closedApps) { app in
                                 DrawerRow(height: 46, highlighted: false, title: app.name, trailing: nil,
                                           action: { client.launch(bundleID: app.bundleID) }) {
@@ -2269,14 +2459,14 @@ struct AppDrawer: View {
                 .font(.system(size: 18))
                 .foregroundStyle(Palette.muted)
             TextField("", text: $search,
-                      prompt: Text("Search apps on \(client.macName)").foregroundColor(Palette.muted))
+                      prompt: Text("在 \(client.macName) 上搜索应用").foregroundColor(Palette.muted))
                 .font(.system(size: 15))
                 .foregroundStyle(Palette.text)
                 .textFieldStyle(.plain)
                 .autocorrectionDisabled()
                 .textInputAutocapitalization(.never)
                 .submitLabel(.search)
-                .accessibilityLabel("Search apps on this Mac")
+                .accessibilityLabel("在此 Mac 上搜索应用")
                 .focused($searchFocused)
         }
         .frame(height: 48)

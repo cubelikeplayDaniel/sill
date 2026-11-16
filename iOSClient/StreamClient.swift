@@ -887,6 +887,18 @@ final class StreamClient: ObservableObject {
     /// Whether this session's Mac takes kind 45 pen tablet batches (`WindowList.pen`), and the main
     /// display's point size for Pad Mode. Cleared with the session.
     @Published var hostPen: PenCapability?
+    /// True when the Mac's currently focused UI element is an editable text input field.
+    @Published var textInputFocused = false
+    /// Monotonic focus token incremented when Mac focus switches to a new editable field.
+    @Published var textInputFocusID: UInt64 = 0
+    /// Normalized vertical center (0.0 top .. 1.0 bottom) of the focused Mac input inside the stream.
+    @Published var textInputAnchorY: Double? = nil
+    /// Synchronized text from the Mac's focused input field or selected text segment.
+    @Published var textInputValue: String? = nil
+    /// True when `textInputValue` represents a highlighted text selection on the Mac.
+    @Published var textInputIsSelection = false
+    /// Monotonic revision bumped whenever Mac's `textInputValue` or selection state changes.
+    @Published var textInputRevision: UInt64 = 0
     /// Screenless drawing tablet mode: when true, the host stops video capture (`StreamSource.none`)
     /// and the iPad shows `PadCanvasView` mapped 1:1 to the Mac's main display aspect ratio.
     @Published var padMode = false
@@ -1877,9 +1889,7 @@ final class StreamClient: ObservableObject {
                     if self.connection === c, self.reconnect == nil { self.status = "Waiting for \(name)…" }
                 }
                 // A connection that never gets past waiting would block every reconnect path
-                // (they all require `connection == nil`): give it five seconds, then let it go. Its
-                // end is one dial that did not connect when it is the automatic reconnect's
-                // (StreamClient+Remote's `sessionEnded`).
+                // (they all require `connection == nil`): give it five seconds, then let it go.
                 DispatchQueue.main.asyncAfter(deadline: .now() + 5) { [weak self] in
                     guard let self, self.connection === c, !self.connected else { return }
                     c.cancel()
@@ -3569,6 +3579,12 @@ final class StreamClient: ObservableObject {
         hostProtocol = nil
         hostGestures = nil
         hostPen = nil
+        textInputFocused = false
+        textInputFocusID = 0
+        textInputAnchorY = nil
+        textInputValue = nil
+        textInputIsSelection = false
+        textInputRevision = 0
         padMode = false
         hostKeyRepeat = nil
         remoteRoute = nil
@@ -3664,6 +3680,9 @@ final class StreamClient: ObservableObject {
     /// The person's pick (a thumbnail, Desktop, the Apps list): the host streams this source and
     /// answers with a fresh window list. It counts for the tour as something happening.
     func select(_ source: StreamSource) {
+        if source != .none, padMode {
+            padMode = false
+        }
         noteAction()
         request(source)
     }
@@ -4228,6 +4247,18 @@ final class StreamClient: ObservableObject {
                 if self.hostGestures != list.gestures { self.hostGestures = list.gestures }
                 if self.hostPen != list.pen { self.hostPen = list.pen }
                 self.hostKeyRepeat = list.keyRepeat
+                let focused = (list.textInputFocused == true) && (why == nil)
+                let focusID = list.textInputFocusID ?? 0
+                let anchorY = focused ? list.textInputAnchorY : nil
+                let syncedVal = focused ? list.textInputValue : nil
+                let isSel = focused && (list.textInputIsSelection == true)
+                let rev = focused ? (list.textInputRevision ?? 0) : 0
+                if self.textInputFocused != focused { self.textInputFocused = focused }
+                if self.textInputFocusID != focusID { self.textInputFocusID = focusID }
+                if self.textInputAnchorY != anchorY { self.textInputAnchorY = anchorY }
+                if self.textInputValue != syncedVal { self.textInputValue = syncedVal }
+                if self.textInputIsSelection != isSel { self.textInputIsSelection = isSel }
+                if self.textInputRevision != rev { self.textInputRevision = rev }
                 // A locked Mac's list has no windows: the drawer and the panel say why, the cover over the
                 // stream too (LockedMac).
                 if self.lockWhy != why { self.lockWhy = why }

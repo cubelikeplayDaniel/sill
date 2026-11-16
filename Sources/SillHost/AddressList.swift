@@ -139,10 +139,11 @@ enum AddressList {
         OriginPolicy.interfaceKind(name: interface) == .lan
     }
 
-    /// Not loopback, not link-local; 100.64/10 only on a tunnel (on a LAN interface it is carrier
-    /// NAT, unreachable from outside).
+    /// Not loopback, not link-local, not RFC 2544 benchmark / Clash Fake-IP (198.18.0.0/15);
+    /// 100.64/10 only on a tunnel (on a LAN interface it is carrier NAT, unreachable from outside).
     static func routableV4(_ a: String, onTunnel: Bool) -> Bool {
         guard let b = IPBytes.parse(a), b.count == 4, !IPBytes.isLoopback(b), !IPBytes.isLinkLocal(b), b != [0, 0, 0, 0] else { return false }
+        if b[0] == 198 && (b[1] == 18 || b[1] == 19) { return false }
         return onTunnel || !IPBytes.isCarrierShared(b)
     }
 

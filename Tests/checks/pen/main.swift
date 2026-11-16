@@ -26,15 +26,17 @@ check("the source target is accepted", Pen.accepted(PenBatch(target: PenTarget.s
 let messy = PenBatch(target: PenTarget.source, samples: [
     PenSample(phase: 9, x: 0.5, y: 0.5),                                  // unknown phase
     PenSample(phase: PenPhase.drag, x: .nan, y: 0.5, pressure: 0.5),      // not finite
-    PenSample(phase: PenPhase.drag, x: 1.5, y: -0.5, pressure: 3, altitude: 4),
-    PenSample(phase: PenPhase.hover, x: 0.5, y: 0.5, pressure: 0.8),
-    PenSample(phase: PenPhase.up, x: 0.5, y: 0.5, pressure: 0.8),
+    PenSample(phase: PenPhase.drag, x: 1.5, y: -0.5, pressure: 3, altitude: 4, t: 123.456),
+    PenSample(phase: PenPhase.hover, x: 0.5, y: 0.5, pressure: 0.8, t: -5),
+    PenSample(phase: PenPhase.up, x: 0.5, y: 0.5, pressure: 0.8, t: .infinity),
 ])
 let kept = Pen.accepted(messy)!
 check("unknown phases and non-finite samples are dropped", kept.count == 3)
 check("places are clamped to 0…1", kept[0].x == 1 && kept[0].y == 0)
 check("pressure is clamped to 1 while touching", kept[0].pressure == 1)
 check("altitude is clamped to π/2", near(kept[0].altitude, .pi / 2))
+check("a valid device timestamp is preserved", kept[0].t == 123.456)
+check("negative or non-finite timestamps become nil", kept[1].t == nil && kept[2].t == nil)
 check("a hover carries no pressure", kept[1].pressure == 0)
 check("an up carries no pressure", kept[2].pressure == 0)
 let flood = PenBatch(target: PenTarget.source, samples: Array(repeating: PenSample(phase: PenPhase.drag, x: 0, y: 0), count: 500))
@@ -96,6 +98,69 @@ check("nothing lifts a pen that is up", !PenState().onlyLifts([PenSample(phase: 
 check("letting go of a down pen: up, then leave", held.letGo() == [.up, .leave] && !held.near && !held.down)
 var idle = PenState()
 check("letting go of a pen that was never near posts nothing", idle.letGo() == [])
+
+// MARK: - Smoothing
+
+let s0 = Pen.smooth(raw: (0.25, 0.75), previous: nil)
+check("first sample passes through unsmoothed", near(s0.x, 0.25) && near(s0.y, 0.75))
+let slow = Pen.smooth(raw: (0.2505, 0.75), previous: s0)
+check("tiny micro-jitter damps near 0.42 alpha", slow.x > 0.25 && slow.x < 0.25025)
+let fast = Pen.smooth(raw: (0.35, 0.75), previous: s0)
+check("fast stroke ramps up to 0.92 alpha", near(fast.x, 0.25 + 0.92 * 0.1))
+
+// MARK: - PenFilter (1€ Anti-Jitter Filter)
+
+var filter = PenFilter()
+let p0 = filter.apply(rawX: 0.25, rawY: 0.75)
+check("PenFilter first sample passes through directly", near(p0.x, 0.25) && near(p0.y, 0.75))
+
+// Test slow diagonal stroke with 10 Hz digitizer ripple
+filter.reset()
+let dt = 1.0 / 240.0
+let speedNorm = 150.0 / 2000.0 // 150 px/sec across 2000 px screen
+var rawYVals: [Double] = []
+var filteredYVals: [Double] = []
+
+for i in 0..<240 {
+    let t = Double(i) * dt
+    let idealX = 0.1 + speedNorm * t
+    let idealY = 0.5
+    let rippleY = (1.0 / 1500.0) * sin(2.0 * .pi * 10.0 * t) // 1.0 px ripple on 1500 px height
+    rawYVals.append(rippleY)
+    let out = filter.apply(rawX: idealX, rawY: idealY + rippleY, rate: 240.0)
+    filteredYVals.append(out.y - idealY)
+}
+
+// Compare ripple amplitudes after filter warmup (drop first 30 samples)
+let warmRaw = Array(rawYVals.dropFirst(30))
+let warmFiltered = Array(filteredYVals.dropFirst(30))
+let rawAmp = (warmRaw.max()! - warmRaw.min()!) / 2.0
+let filteredAmp = (warmFiltered.max()! - warmFiltered.min()!) / 2.0
+let suppression = (1.0 - (filteredAmp / rawAmp)) * 100.0
+
+check("PenFilter suppresses 10 Hz digitizer ripple by over 80%", suppression > 80.0)
+
+// Test fast stroke tracking lag
+var fastFilter = PenFilter()
+let fastSpeedNorm = 1500.0 / 2000.0 // 1500 px/sec fast flick
+var lags: [Double] = []
+for i in 0..<60 {
+    let t = Double(i) * dt
+    let rawX = 0.1 + fastSpeedNorm * t
+    let out = fastFilter.apply(rawX: rawX, rawY: 0.5, rate: 240.0)
+    if i >= 15 {
+        let lagNorm = rawX - out.x
+        let lagMs = (lagNorm / fastSpeedNorm) * 1000.0
+        lags.append(lagMs)
+    }
+}
+let avgLagMs = lags.reduce(0, +) / Double(lags.count)
+check("PenFilter fast stroke tracking lag under 20 ms", avgLagMs < 20.0)
+
+// Test reset
+fastFilter.reset()
+let pReset = fastFilter.apply(rawX: 0.8, rawY: 0.2)
+check("PenFilter reset restarts tracking without lag from previous stroke", near(pReset.x, 0.8) && near(pReset.y, 0.2))
 
 print("\(passes) passed, \(fails) failed")
 exit(fails == 0 ? 0 : 1)
